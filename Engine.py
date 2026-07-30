@@ -9,7 +9,6 @@ def is_admin():
         return False
 
 if not is_admin():
-    # Перезапускаем скрипт с правами администратора
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
@@ -33,66 +32,136 @@ import win32con
 
 # === 3. МОДУЛЬ КОНФИГУРАЦИИ И АПДЕЙТЕРА ===
 CONFIG_FILE = "config.json"
+BASE_RAW_URL = "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.0",
-    "update_server_url": "",
-    "auto_update_enabled": False,
-    "launcher_path": r"C:\Program Files\Netmarble\Netmarble Launcher\Netmarble Launcher.exe",
-    "game_window_title": "RF ONLINE NEXT",
-    "confidence_acc_inactive": 0.97,
-    "confidence_play_button": 0.7,
-    "wait_between_accounts_sec": 20
+    "version": "1.0.9",
+    "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
+    "auto_update_enabled": True,
+    "files_to_update": ["Engine.py", "acc_inactive.png", "acc_active.png", "play.png", "enter.png"],
+    
+    "launcher": {
+        "path": r"C:\Program Files\Netmarble\Netmarble Launcher\Netmarble Launcher.exe",
+        "window_title": "Netmarble Launcher",
+        "startup_wait_sec": 20,
+        "activate_delay_sec": 1.5
+    },
+    "game": {
+        "window_title": "RF ONLINE NEXT",
+        "max_windows": 2
+    },
+    "images": {
+        "acc_inactive": "acc_inactive.png",
+        "acc_active": "acc_active.png",
+        "play_button": "play.png",
+        "enter_button": "enter.png"
+    },
+    "recognition": {
+        "confidence_acc_inactive": 0.75,
+        "confidence_acc_active": 0.75,
+        "confidence_play_button": 0.8,
+        "confidence_enter_button": 0.72,
+        "click_offset_min_px": 3,
+        "click_offset_max_px": 12
+    },
+    "timings": {
+        "delay_after_acc_click_sec": 1.5,
+        "play_button_timeout_sec": 10,
+        "wait_between_accounts_sec": 20,
+        "game_launch_delay_min_sec": 23,
+        "game_launch_delay_max_sec": 26,
+        "enter_button_timeout_sec": 15,
+        "console_close_delay_sec": 7
+    },
+    "grid_positions": [
+        {"x": 1277, "y": 0, "w": 1283, "h": 700},
+        {"x": 0, "y": 700, "w": 1280, "h": 700}
+    ]
 }
 
-def load_local_config():
-    """Загружает локальный config.json. Если его нет — создает базовый."""
+def get_cfg_val(cfg, group, key, default):
+    try:
+        return cfg.get(group, {}).get(key, default)
+    except Exception:
+        return default
+
+def load_config():
     if not os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(DEFAULT_CONFIG, f, indent=4, ensure_ascii=False)
+            print(f"[Конфиг] Создан файл по умолчанию: {CONFIG_FILE}")
+            return DEFAULT_CONFIG
         except Exception as e:
-            print(f"[Конфиг] Не удалось создать {CONFIG_FILE}: {e}")
-        return DEFAULT_CONFIG
-
+            print(f"[Ошибка создания конфига]: {e}")
+            return DEFAULT_CONFIG
     try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            for k, v in DEFAULT_CONFIG.items():
+                cfg.setdefault(k, v)
+            return cfg
     except Exception as e:
-        print(f"[Конфиг] Ошибка чтения {CONFIG_FILE}, используем стандартные настройки: {e}")
+        print(f"[Ошибка чтения конфига]: {e}. Используем дефолтные настройки.")
         return DEFAULT_CONFIG
 
-def check_for_updates(cfg):
-    """Связывается с сервером/GitHub и обновляет локальный конфиг при наличии новой версии."""
-    if not cfg.get("auto_update_enabled") or not cfg.get("update_server_url"):
-        return cfg
+def download_file_from_github(filename):
+    url = BASE_RAW_URL + filename
+    try:
+        print(f"[Апдейтер] Скачиваем {filename}...")
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response, open(filename, 'wb') as out_file:
+            out_file.write(response.read())
+        return True
+    except Exception as e:
+        print(f"[Ошибка скачивания {filename}]: {e}")
+        return False
 
-    url = cfg["update_server_url"]
+def check_and_update_all(local_cfg):
+    if not local_cfg.get("auto_update_enabled", True):
+        return local_cfg
+
+    server_url = local_cfg.get("update_server_url")
+    if not server_url:
+        return local_cfg
+
     print("[Апдейтер] Проверка обновлений с сервера...")
-
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Bot-Launcher/1.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            server_cfg = json.loads(response.read().decode('utf-8'))
-
-        server_version = server_cfg.get("version", "1.0.0")
-        local_version = cfg.get("version", "1.0.0")
-
-        if server_version > local_version:
-            print(f"[Апдейтер] Найдено обновление! ({local_version} -> {server_version})")
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(server_cfg, f, indent=4, ensure_ascii=False)
-            print("[Апдейтер] Конфигурация успешно обновлена.")
-            return server_cfg
-        else:
-            print(f"[Апдейтер] У вас актуальная версия конфига ({local_version}).")
-
-    except urllib.error.URLError as e:
-        print(f"[Апдейтер] Сервер недоступен ({e.reason}). Работаем на локальных настройках.")
+        req = urllib.request.Request(server_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            remote_cfg = json.loads(response.read().decode('utf-8'))
     except Exception as e:
-        print(f"[Апдейтер] Ошибка при проверке обновлений: {e}")
+        print(f"[Апдейтер] Не удалось проверить обновления: {e}")
+        return local_cfg
 
-    return cfg
+    local_ver = local_cfg.get("version", "1.0.0")
+    remote_ver = remote_cfg.get("version", "1.0.0")
+
+    if remote_ver > local_ver:
+        print(f"[Апдейтер] Найдена новая версия {remote_ver} (текущая: {local_ver})! Начинаем обновление...")
+        files_list = remote_cfg.get("files_to_update", [])
+        engine_was_updated = False
+
+        for filename in files_list:
+            if download_file_from_github(filename):
+                if filename == "Engine.py":
+                    engine_was_updated = True
+
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(remote_cfg, f, indent=4, ensure_ascii=False)
+            print("[Апдейтер] Конфигурация успешно обновлена!")
+        except Exception as e:
+            print(f"[Ошибка сохранения config.json]: {e}")
+
+        if engine_was_updated:
+            print("[Апдейтер] Код скрипта обновлен. Перезапуск бота...")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        return remote_cfg
+    else:
+        print(f"[Апдейтер] У вас актуальная версия конфига ({local_ver}).")
+        return local_cfg
 
 
 # === 4. ВСПОМОГАТЕЛЬНЫЕ ПУТИ И ЛОГИРОВАНИЕ ===
@@ -101,69 +170,68 @@ def get_path(filename):
         application_path = os.path.dirname(sys.executable)
     else:
         application_path = os.path.dirname(os.path.abspath(__file__))
+    
+    root_path = os.path.join(application_path, filename)
+    if os.path.exists(root_path):
+        return root_path
     return os.path.join(application_path, 'images', filename)
 
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-# Настройка логирования ошибок
 try:
     log_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
     sys.stderr = open(os.path.join(log_dir, 'error_log.txt'), 'a', encoding='utf-8')
 except Exception:
-        pass
+    pass
 
 
 # === 5. ИНИЦИАЛИЗАЦИЯ НАСТРОЕК И API WINDOWS ===
 print("Бот запущен...")
 
-# Загружаем настройки и проверяем обновления с сервера
-CFG = load_local_config()
-CFG = check_for_updates(CFG)
-
-LAUNCHER_PATH = CFG.get("launcher_path", DEFAULT_CONFIG["launcher_path"])
-GAME_WINDOW_TITLE = CFG.get("game_window_title", DEFAULT_CONFIG["game_window_title"])
-
-class RECT(ctypes.Structure):
-    _fields_ = [("left", ctypes.c_int), ("top", ctypes.c_int),
-                ("right", ctypes.c_int), ("bottom", ctypes.c_int)]
+CFG = load_config()
+CFG = check_and_update_all(CFG)
 
 user32 = ctypes.WinDLL("user32")
 dwmapi = ctypes.WinDLL("dwmapi")
 
-# Автоматически определяем чистую рабочую зону Full HD экрана (БЕЗ панели задач)
-monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0, 0)))
-work_area = monitor_info['Work']
-
-SCREEN_W = work_area[2]    # 1920
-WORK_H = work_area[3]      # Высота рабочей области (например, 1040)
-
-HALF_W = SCREEN_W // 2     # 960
-HALF_H = WORK_H // 2       # Высота окон (например, 520)
-
-# Адаптивная сетка под Full HD с микро-коррекцией правого окна на 3 пикселя
-ZONES = [
-    (HALF_W - 3, 0, HALF_W + 3, HALF_H),      # 1-е окно: Справа-Сверху
-    (0, HALF_H, HALF_W, WORK_H - HALF_H)      # 2-е окно: Слева-Снизу
-]
-
 
 # === 6. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ВЗАИМОДЕЙСТВИЯ ===
-def random_sleep(min_val, max_val):
-    time.sleep(random.uniform(min_val, max_val))
+def force_focus_window(hwnd):
+    """Фокусирует окно."""
+    try:
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        else:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        
+        win32gui.SetForegroundWindow(hwnd)
+        win32gui.BringWindowToTop(hwnd)
+    except Exception as e:
+        print(f"[Предупреждение] Не удалось сфокусировать окно: {e}")
 
-def click_with_offset(base_x, base_y, offset=3):
-    rx = base_x + random.randint(-offset, offset)
-    ry = base_y + random.randint(-offset, offset)
+def random_sleep(min_sec, max_sec):
+    """Пауза со случайным плавающим временем."""
+    delay = random.uniform(min_sec, max_sec)
+    time.sleep(delay)
+
+def click_with_offset(base_x, base_y, min_offset=None, max_offset=None):
+    """Клик с динамическим рандомным разбросом координат."""
+    if min_offset is None:
+        min_offset = get_cfg_val(CFG, "recognition", "click_offset_min_px", 3)
+    if max_offset is None:
+        max_offset = get_cfg_val(CFG, "recognition", "click_offset_max_px", 12)
+
+    offset_x = random.randint(min_offset, max_offset) * random.choice([-1, 1])
+    offset_y = random.randint(min_offset, max_offset) * random.choice([-1, 1])
+    
+    rx = base_x + offset_x
+    ry = base_y + offset_y
+
+    time.sleep(random.uniform(0.1, 0.3))
     pyautogui.click(rx, ry)
 
 def find_launcher_window():
+    title_key = get_cfg_val(CFG, "launcher", "window_title", "Launcher")
     for w in gw.getAllWindows():
-        if "Netmarble Launcher" in w.title or "Launcher" in w.title:
+        if title_key.lower() in w.title.lower() or "launcher" in w.title.lower():
             return w
     return None
 
@@ -187,90 +255,185 @@ def resize_with_dwm(hwnd, target_x, target_y, target_w, target_h):
 def get_or_start_launcher():
     win = find_launcher_window()
     if not win:
+        launcher_path = get_cfg_val(CFG, "launcher", "path", DEFAULT_CONFIG["launcher"]["path"])
+        startup_wait = get_cfg_val(CFG, "launcher", "startup_wait_sec", 20)
         print("Лаунчер не найден. Запускаем...")
-        os.startfile(LAUNCHER_PATH)
-        time.sleep(10)
+        os.startfile(launcher_path)
+        random_sleep(startup_wait - 2, startup_wait + 3)
         win = find_launcher_window()
     return win
 
-def click_image(image_name, offset=5, confidence=0.8):
-    img_path = get_path(image_name)
+def get_inactive_accounts(path_inactive, path_active, conf_acc):
+    """Надежный поиск неактивных плашек с фильтрацией дубликатов."""
+    active_pos = None
     try:
-        pos = pyautogui.locateOnScreen(img_path, confidence=confidence)
-        if pos:
-            center_x = pos.left + pos.width // 2
-            center_y = pos.top + pos.height // 2
-            click_with_offset(center_x, center_y, offset)
-            return True
-    except Exception as e:
-        print(f"[Ошибка click_image] {image_name}: {e}")
+        active_pos = pyautogui.locateOnScreen(path_active, confidence=conf_acc)
+        print(f"[Лаунчер] Активная плашка найдена в координатах: {active_pos}")
+    except Exception:
+        print("[Лаунчер] Активная плашка (acc_active.png) не найдена на экране.")
+
+    raw_inactive = []
+    try:
+        raw_inactive = list(pyautogui.locateAllOnScreen(path_inactive, confidence=conf_acc))
+    except Exception:
+        pass
+
+    print(f"[Лаунчер] Сырых неактивных плашек найдено: {len(raw_inactive)}")
+
+    inactive_boxes = []
+    for box in raw_inactive:
+        if active_pos:
+            cx_in = box.left + box.width // 2
+            cy_in = box.top + box.height // 2
+            cx_act = active_pos.left + active_pos.width // 2
+            cy_act = active_pos.top + active_pos.height // 2
+            if abs(cx_in - cx_act) < 30 and abs(cy_in - cy_act) < 30:
+                continue
+
+        is_duplicate = False
+        for existing in inactive_boxes:
+            if abs(existing.left - box.left) < 15 and abs(existing.top - box.top) < 15:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            inactive_boxes.append(box)
+
+    inactive_boxes.sort(key=lambda b: (b.top, b.left))
+    print(f"[Лаунчер] Чистых уникальных неактивных плашек для выбора: {len(inactive_boxes)}")
+    return active_pos, inactive_boxes
+
+def wait_and_click_image(image_name, timeout=10, confidence=None, region=None):
+    if confidence is None:
+        confidence = get_cfg_val(CFG, "recognition", "confidence_play_button", 0.8)
+        
+    img_path = get_path(image_name)
+    if not os.path.exists(img_path):
+        print(f"[Ошибка] Файл не найден: {img_path}")
+        return False
+
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            if region:
+                pos = pyautogui.locateOnScreen(img_path, confidence=confidence, region=region)
+            else:
+                pos = pyautogui.locateOnScreen(img_path, confidence=confidence)
+                
+            if pos:
+                center_x = pos.left + pos.width // 2
+                center_y = pos.top + pos.height // 2
+                click_with_offset(center_x, center_y)
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
     return False
 
 
 # === 7. ОСНОВНАЯ ЛОГИКА ЗАПУСКА И РАССТАНОВКИ ===
 def run_accounts(launcher_win):
-    print("--- Запуск аккаунтов (гибкий режим) ---")
+    print("--- Запуск аккаунтов ---")
 
-    # --- ДОБАВЛЕНО: Активируем окно и даем ему время прорисоваться ДО поиска ---
+    act_delay = get_cfg_val(CFG, "launcher", "activate_delay_sec", 1.5)
+    img_inactive = get_cfg_val(CFG, "images", "acc_inactive", "acc_inactive.png")
+    path_inactive = get_path(img_inactive)
+    img_active = get_cfg_val(CFG, "images", "acc_active", "acc_active.png")
+    path_active = get_path(img_active)
+    img_play = get_cfg_val(CFG, "images", "play_button", "play.png")
+    
+    conf_acc = get_cfg_val(CFG, "recognition", "confidence_acc_inactive", 0.75)
+    conf_play = get_cfg_val(CFG, "recognition", "confidence_play_button", 0.8)
+    
+    delay_acc_click = get_cfg_val(CFG, "timings", "delay_after_acc_click_sec", 1.5)
+    play_timeout = get_cfg_val(CFG, "timings", "play_button_timeout_sec", 10)
+    wait_sec = get_cfg_val(CFG, "timings", "wait_between_accounts_sec", 20)
+    max_windows = get_cfg_val(CFG, "game", "max_windows", 2)
+
+    launched_count = 0
+    launched_centers = [] # Список координат уже запущенных аккаунтов
+
+    for i in range(max_windows):
+        print(f"\n================ [ Запуск аккаунта {i + 1} из {max_windows} ] ================")
+        
+        if launcher_win:
+            force_focus_window(launcher_win._hWnd)
+            random_sleep(act_delay - 0.3, act_delay + 0.5)
+
+        active_pos, inactive_boxes = get_inactive_accounts(path_inactive, path_active, conf_acc)
+
+        # Фильтруем плашки: исключаем те, на которые уже кликали в предыдущих итерациях
+        fresh_boxes = []
+        for box in inactive_boxes:
+            cx = box.left + box.width // 2
+            cy = box.top + box.height // 2
+            
+            is_already_launched = False
+            for lx, ly in launched_centers:
+                if abs(cx - lx) < 40 and abs(cy - ly) < 40:
+                    is_already_launched = True
+                    break
+            
+            if not is_already_launched:
+                fresh_boxes.append((box, cx, cy))
+
+        print(f" -> Доступных новых плашек после проверки: {len(fresh_boxes)}")
+
+        if fresh_boxes:
+            target_box, cx, cy = fresh_boxes[0]
+            print(f" -> Кликаем по новой плашке аккаунта ({cx}, {cy})...")
+            click_with_offset(cx, cy)
+            random_sleep(delay_acc_click, delay_acc_click + 1.0)
+            launched_centers.append((cx, cy))
+        else:
+            if i == 0 and active_pos:
+                print(" -> [Аккаунт 1] Уже выбран по умолчанию (активна плашка). Кликать не нужно.")
+            else:
+                print(f" -> [Предупреждение] Не удалось найти новую неактивную плашку для аккаунта {i + 1}.")
+                break
+
+        print(f" -> Ожидание и клик по кнопке 'Играть'...")
+        if wait_and_click_image(img_play, timeout=play_timeout, confidence=conf_play):
+            launched_count += 1
+            print(f" -> УСПЕХ: Аккаунт {launched_count} запущен!")
+            if launched_count < max_windows:
+                random_wait = random.uniform(wait_sec - 2, wait_sec + 4)
+                print(f" -> Ожидание {random_wait:.1f} сек перед выбором следующего аккаунта...")
+                time.sleep(random_wait)
+        else:
+            print(f" -> [Ошибка] Кнопка 'Играть' не распознана.")
+            break
+
     if launcher_win:
         try:
-            launcher_win.restore()
-            launcher_win.activate()
-            time.sleep(1.5)  # Задержка, чтобы лаунчер успел открыться на экране
-        except Exception as e:
-            print(f"[Предупреждение] Не удалось активировать лаунчер: {e}")
+            win32gui.ShowWindow(launcher_win._hWnd, win32con.SW_MINIMIZE)
+            print("\nЛаунчер свернут.")
+        except Exception:
+            pass
 
-    path_inactive = get_path('acc_inactive.png')
+    print("--- Работа с лаунчером завершена ---")
+    return launched_count
 
-    # 1. Ищем ВСЕ доступные (неактивные) аккаунты
-    conf_acc = CFG.get("confidence_acc_inactive", 0.8)
-    accounts = []
+def wait_and_arrange_windows(target_count=None):
+    game_title = get_cfg_val(CFG, "game", "window_title", "RF ONLINE NEXT")
+    grid_positions = CFG.get("grid_positions", [])
     
-    try:
-        accounts = list(pyautogui.locateAllOnScreen(path_inactive, confidence=conf_acc))
-    except Exception:
-        pass # Если ничего не найдено, просто останется пустой список
+    if target_count is None or target_count == 0:
+        target_count = get_cfg_val(CFG, "game", "max_windows", len(grid_positions) if grid_positions else 2)
 
-    accounts = sorted(accounts, key=lambda box: (box.top, box.left))
+    required_windows = min(target_count, len(grid_positions)) if grid_positions else target_count
+    
+    min_launch_delay = get_cfg_val(CFG, "timings", "game_launch_delay_min_sec", 23)
+    max_launch_delay = get_cfg_val(CFG, "timings", "game_launch_delay_max_sec", 26)
+    launch_delay = random.uniform(min_launch_delay, max_launch_delay)
+    
+    print(f"\nПауза {launch_delay:.1f} сек для подгрузки клиента игры...")
+    time.sleep(launch_delay)
 
-    if not accounts:
-        print("Нет доступных аккаунтов для запуска (возможно, все уже запущены).")
-        return
+    print(f"Ожидание появления игровых окон (цель: {required_windows})...")
 
-    print(f"Найдено плашек для запуска: {len(accounts)}")
-
-    # 2. Проходим по каждой найденной плашке
-    for i, box in enumerate(accounts):
-        if launcher_win:
-            try:
-                launcher_win.restore()
-                launcher_win.activate()
-                time.sleep(1)
-            except Exception:
-                pass
-
-        # Клик по аккаунту
-        x = box.left + box.width // 2
-        y = box.top + box.height // 2
-        pyautogui.click(x, y)
-        time.sleep(1.5)
-
-        # Клик по кнопке "Играть"
-        conf_play = CFG.get("confidence_play_button", 0.8)
-        wait_sec = CFG.get("wait_between_accounts_sec", 20)
-
-        if click_image('play.png', confidence=conf_play):
-            print(f"Аккаунт {i+1} успешно отправлен на запуск.")
-            time.sleep(wait_sec)
-        else:
-            print(f"Аккаунт {i+1}: Кнопка 'Играть' не найдена, пропускаем.")
-
-    print("--- Работа завершена ---")
-    pyautogui.moveTo(0, 0)
-
-def wait_and_arrange_windows():
     for attempt in range(60):
-        possible_windows = [w for w in gw.getWindowsWithTitle(GAME_WINDOW_TITLE) if not w.isMinimized]
+        possible_windows = [w for w in gw.getWindowsWithTitle(game_title) if not w.isMinimized]
 
         unique_game_windows = []
         seen_pids = set()
@@ -296,21 +459,54 @@ def wait_and_arrange_windows():
                 seen_pids.add(win_pid)
                 unique_game_windows.append(win)
 
-        if len(unique_game_windows) >= 2:
-            print("[4/4] Игровые окна обнаружены. Раскладываем по сетке...")
-            time.sleep(8)
+        if len(unique_game_windows) >= required_windows:
+            print(f"[{len(unique_game_windows)}/{required_windows}] Игровые окна обнаружены. Раскладываем по сетке...")
+            random_sleep(2.0, 4.0)
 
-            for idx, win in enumerate(unique_game_windows[:2]):
-                target = ZONES[idx]
+            for idx, win in enumerate(unique_game_windows[:len(grid_positions)]):
+                pos = grid_positions[idx]
+                target_x, target_y, target_w, target_h = pos["x"], pos["y"], pos["w"], pos["h"]
                 hwnd = win._hWnd
                 try:
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                     time.sleep(0.5)
 
-                    resize_with_dwm(hwnd, target[0], target[1], target[2], target[3])
-                    print(f" -> Окно {idx+1} успешно выставлено в Full HD зону: {target}")
+                    resize_with_dwm(hwnd, target_x, target_y, target_w, target_h)
+                    print(f" -> Окно {idx+1} успешно выставлено: ({target_x}, {target_y}, {target_w}, {target_h})")
                 except Exception as e:
                     print(f"[Предупреждение] Не удалось переместить окно {idx+1}: {e}")
+
+            print("\n--- Фокус, активация и нажатие кнопки 'Выбрать' ---")
+            img_enter = get_cfg_val(CFG, "images", "enter_button", "enter.png")
+            conf_enter = get_cfg_val(CFG, "recognition", "confidence_enter_button", 0.72)
+            enter_timeout = get_cfg_val(CFG, "timings", "enter_button_timeout_sec", 15)
+
+            for idx, win in enumerate(unique_game_windows[:len(grid_positions)]):
+                hwnd = win._hWnd
+                print(f"\n[Окно {idx+1}] Активация...")
+                force_focus_window(hwnd)
+                random_sleep(0.8, 1.5)
+
+                try:
+                    rect = win32gui.GetWindowRect(hwnd)
+                    center_x = (rect[0] + rect[2]) // 2
+                    center_y = (rect[1] + rect[3]) // 2
+                    
+                    center_offset_x = random.randint(15, 40) * random.choice([-1, 1])
+                    center_offset_y = random.randint(15, 40) * random.choice([-1, 1])
+                    
+                    print(f" -> Клик для фокуса в точке ({center_x + center_offset_x}, {center_y + center_offset_y})...")
+                    click_with_offset(center_x + center_offset_x, center_y + center_offset_y, min_offset=2, max_offset=8)
+                except Exception as e:
+                    print(f"[Ошибка] Не удалось кликнуть в окне {idx+1}: {e}")
+
+                print(f" -> Ожидание и клик по кнопке 'Выбрать'...")
+                if wait_and_click_image(img_enter, timeout=enter_timeout, confidence=conf_enter):
+                    print(f" -> УСПЕХ: Кнопка 'Выбрать' нажата в окне {idx+1}!")
+                else:
+                    print(f" -> [Предупреждение] Кнопка 'Выбрать' не распознана в окне {idx+1}.")
+
+                time.sleep(1.0)
 
             print("\n=== ВСЕ ГОТОВО. СКРИПТ ОТКЛЮЧИЛСЯ ===")
             return
@@ -323,14 +519,14 @@ def wait_and_arrange_windows():
 # === 8. ТОЧКА ВХОДА ===
 if __name__ == "__main__":
     win = get_or_start_launcher()
-    run_accounts(win)
-    wait_and_arrange_windows()
+    count_launched = run_accounts(win)
+    wait_and_arrange_windows(target_count=count_launched)
 
-    # --- БЛОК АВТОЗАКРЫТИЯ КОНСОЛИ ---
+    close_delay = get_cfg_val(CFG, "timings", "console_close_delay_sec", 7)
     print("\n-------------------------------------------")
-    for i in range(10, 0, -1):
+    for i in range(close_delay, 0, -1):
         print(f"Окна выставлены. Закрытие консоли через {i} сек...", end="\r")
         time.sleep(1)
 
-    print("\nВсе готово! Бот завершает работу. Удачи на фарме!")
+    print("\nВсе готово! Бот завершает работу.")
     sys.exit()
