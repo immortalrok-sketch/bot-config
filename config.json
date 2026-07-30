@@ -1,5 +1,5 @@
 {
-    "version": "1.0.5",
+    "version": "1.0.9",
     "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
     "auto_update_enabled": true,
     "files_to_update": [
@@ -25,7 +25,7 @@
         "play_button": "play.png",
         "enter_button": "enter.png"
     },
-"recognition": {
+    "recognition": {
         "confidence_acc_inactive": 0.75,
         "confidence_acc_active": 0.75,
         "confidence_play_button": 0.8,
@@ -40,8 +40,6 @@
         "game_launch_delay_min_sec": 23,
         "game_launch_delay_max_sec": 26,
         "enter_button_timeout_sec": 40,
-        "delay_before_q_key_min_sec": 11.0,
-        "delay_before_q_key_max_sec": 14.0,
         "console_close_delay_sec": 7
     },
     "grid_positions": [
