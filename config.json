@@ -1,5 +1,5 @@
 {
-    "version": "1.0.6",
+    "version": "1.0.5",
     "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
     "auto_update_enabled": true,
     "files_to_update": [
@@ -43,7 +43,6 @@
         "delay_before_q_key_min_sec": 11.0,
         "delay_before_q_key_max_sec": 14.0,
         "console_close_delay_sec": 7
-    },
     },
     "grid_positions": [
         {
