@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "update_server_url": "ЗДЕСЬ_БУДЕТ_ТВОЯ_RAW_ССЫЛКА",
+  "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
   "auto_update_enabled": true,
   "launcher_path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
   "game_window_title": "RF ONLINE NEXT",
