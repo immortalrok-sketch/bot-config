@@ -1,0 +1,10 @@
+{
+  "version": "1.0.1",
+  "update_server_url": "ЗДЕСЬ_БУДЕТ_ТВОЯ_RAW_ССЫЛКА",
+  "auto_update_enabled": true,
+  "launcher_path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
+  "game_window_title": "RF ONLINE NEXT",
+  "confidence_acc_inactive": 0.8,
+  "confidence_play_button": 0.8,
+  "wait_between_accounts_sec": 20
+}
