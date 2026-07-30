@@ -1,16 +1,10 @@
-{
-    "version": "1.0.9",
+    "version": "1.0.10",
     "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
-    "auto_update_enabled": true,
-    "files_to_update": [
-        "Engine.py",
-        "acc_inactive.png",
-        "acc_active.png",
-        "play.png",
-        "enter.png"
-    ],
+    "auto_update_enabled": True,
+    "files_to_update": ["Engine.py", "acc_inactive.png", "acc_active.png", "play.png", "enter.png"],
+    
     "launcher": {
-        "path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
+        "path": r"C:\Program Files\Netmarble\Netmarble Launcher\Netmarble Launcher.exe",
         "window_title": "Netmarble Launcher",
         "startup_wait_sec": 20,
         "activate_delay_sec": 1.5
@@ -39,21 +33,7 @@
         "wait_between_accounts_sec": 20,
         "game_launch_delay_min_sec": 23,
         "game_launch_delay_max_sec": 26,
-        "enter_button_timeout_sec": 40,
+        "enter_button_timeout_sec": 15,
         "console_close_delay_sec": 7
     },
-    "grid_positions": [
-        {
-            "x": 1277,
-            "y": 0,
-            "w": 1283,
-            "h": 700
-        },
-        {
-            "x": 0,
-            "y": 700,
-            "w": 1280,
-            "h": 700
-        }
-    ]
-}
+    "grid_positions": []
