@@ -1,46 +1,62 @@
 {
-  "version": "1.0.4",
-  "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
-  "auto_update_enabled": true,
-  "files_to_update": [
-    "Engine.py",
-    "acc_inactive.png",
-    "acc_active.png",
-    "play.png"
-  ],
-
-  "launcher": {
-    "path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
-    "window_title": "Netmarble Launcher",
-    "startup_wait_sec": 15,
-    "activate_delay_sec": 1.5
-  },
-
-  "game": {
-    "window_title": "RF ONLINE NEXT",
-    "max_windows": 4
-  },
-
-  "images": {
-    "acc_inactive": "acc_inactive.png",
-    "acc_active": "acc_active.png",
-    "play_button": "play.png"
-  },
-
-  "recognition": {
-    "confidence_acc_inactive": 0.8,
-    "confidence_play_button": 0.8,
-    "click_offset_px": 3
-  },
-
-  "timings": {
-    "delay_after_acc_click_sec": 1.5,
-    "wait_between_accounts_sec": 20,
-    "console_close_delay_sec": 7
-  },
-
-  "grid_positions": [
-    {"x": 1277, "y": 0, "w": 1283, "h": 700},
-    {"x": 0, "y": 700, "w": 1280, "h": 700}
-  ]
+    "version": "1.0.6",
+    "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
+    "auto_update_enabled": true,
+    "files_to_update": [
+        "Engine.py",
+        "acc_inactive.png",
+        "acc_active.png",
+        "play.png",
+        "enter.png"
+    ],
+    "launcher": {
+        "path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
+        "window_title": "Netmarble Launcher",
+        "startup_wait_sec": 20,
+        "activate_delay_sec": 1.5
+    },
+    "game": {
+        "window_title": "RF ONLINE NEXT",
+        "max_windows": 2
+    },
+    "images": {
+        "acc_inactive": "acc_inactive.png",
+        "acc_active": "acc_active.png",
+        "play_button": "play.png",
+        "enter_button": "enter.png"
+    },
+"recognition": {
+        "confidence_acc_inactive": 0.75,
+        "confidence_acc_active": 0.75,
+        "confidence_play_button": 0.8,
+        "confidence_enter_button": 0.72,
+        "click_offset_min_px": 3,
+        "click_offset_max_px": 12
+    },
+    "timings": {
+        "delay_after_acc_click_sec": 1.5,
+        "play_button_timeout_sec": 10,
+        "wait_between_accounts_sec": 20,
+        "game_launch_delay_min_sec": 23,
+        "game_launch_delay_max_sec": 26,
+        "enter_button_timeout_sec": 40,
+        "delay_before_q_key_min_sec": 11.0,
+        "delay_before_q_key_max_sec": 14.0,
+        "console_close_delay_sec": 7
+    },
+    },
+    "grid_positions": [
+        {
+            "x": 1277,
+            "y": 0,
+            "w": 1283,
+            "h": 700
+        },
+        {
+            "x": 0,
+            "y": 700,
+            "w": 1280,
+            "h": 700
+        }
+    ]
 }
