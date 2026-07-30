@@ -1,16 +1,16 @@
-DEFAULT_CONFIG = {
-    "version": "1.0.3",
-    "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
-    "auto_update_enabled": True,
-    "files_to_update": [
-        "Engine.py",
-        "acc_inactive.png",
-        "acc_active.png",
-        "play.png"
-    ],
-    "launcher_path": r"C:\Program Files\Netmarble\Netmarble Launcher\Netmarble Launcher.exe",
-    "game_window_title": "RF ONLINE NEXT",
-    "confidence_acc_inactive": 0.8,
-    "confidence_play_button": 0.8,
-    "wait_between_accounts_sec": 20
+{
+  "version": "1.0.3",
+  "update_server_url": "https://raw.githubusercontent.com/immortalrok-sketch/bot-config/main/config.json",
+  "auto_update_enabled": true,
+  "files_to_update": [
+    "Engine.py",
+    "acc_inactive.png",
+    "acc_active.png",
+    "play.png"
+  ],
+  "launcher_path": "C:\\Program Files\\Netmarble\\Netmarble Launcher\\Netmarble Launcher.exe",
+  "game_window_title": "RF ONLINE NEXT",
+  "confidence_acc_inactive": 0.8,
+  "confidence_play_button": 0.8,
+  "wait_between_accounts_sec": 20
 }
