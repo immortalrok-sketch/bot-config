@@ -29,18 +29,6 @@ import win32api
 import win32gui
 import win32con
 
-# === ДОБАВИТЬ ЭТО В САМОЕ НАЧАЛОEngine.py, ПОСЛЕ ИМПОРТОВ ===
-try:
-    # Пытаемся сделать приложение DPI-независимым (для версий Win 10/11)
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
-    # Fallback для старых версий Windows
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        print("[Предупреждение] Не удалось установить DPI Awareness.")
-# ===========================================================
-
 
 # === 3. МОДУЛЬ КОНФИГУРАЦИИ И АПДЕЙТЕРА ===
 CONFIG_FILE = "config.json"
@@ -425,8 +413,7 @@ def wait_and_arrange_windows(target_count=None):
     game_title = get_cfg_val(CFG, "game", "window_title", "RF ONLINE NEXT")
     max_win_cfg = get_cfg_val(CFG, "game", "max_windows", 2)
     
-    # Жестко и точно получаем разрешение экрана через Windows API (игнорируя баги pyautogui и масштабирования)
-    user32 = ctypes.windll.user32
+    # Точное получение физического разрешения экрана (игнорирует масштабирование Windows и баги pyautogui)
     screen_w = user32.GetSystemMetrics(0)
     screen_h = user32.GetSystemMetrics(1)
     
@@ -437,7 +424,7 @@ def wait_and_arrange_windows(target_count=None):
     # 0 -> Правый верх
     # 1 -> Левый низ
     # 2 -> Правый низ
-    # 3 -> Левый верх (сверху слева)
+    # 3 -> Левый верх
     grid_positions = [
         {"x": half_w, "y": 0, "w": screen_w - half_w, "h": half_h},                 # 1. Правый верх
         {"x": 0, "y": half_h, "w": half_w, "h": screen_h - half_h},                 # 2. Левый низ
@@ -487,7 +474,7 @@ def wait_and_arrange_windows(target_count=None):
             print(f"[{len(unique_game_windows)}/{required_windows}] Игровые окна обнаружены. Раскладываем по углам...")
             random_sleep(2.0, 4.0)
 
-            # Сортируем окна по системному дескриптору, чтобы порядок всегда был одинаковым
+            # Фиксируем порядок окон, чтобы они не менялись местами при перезапусках
             unique_game_windows.sort(key=lambda w: w._hWnd)
 
             for idx, win in enumerate(unique_game_windows[:required_windows]):
@@ -497,15 +484,7 @@ def wait_and_arrange_windows(target_count=None):
                 try:
                     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                     time.sleep(0.5)
-                    
-                    # Используем точное позиционирование через SetWindowPos (обходит баги масштабирования)
-                    win32gui.SetWindowPos(
-                        hwnd,
-                        win32con.HWND_TOP,
-                        target_x, target_y,
-                        target_w, target_h,
-                        win32con.SWP_NOOWNERZORDER
-                    )
+                    resize_with_dwm(hwnd, target_x, target_y, target_w, target_h)
                     print(f" -> Окно {idx+1} успешно выставлено: ({target_x}, {target_y}, {target_w}, {target_h})")
                 except Exception as e:
                     print(f"[Предупреждение] Не удалось переместить окно {idx+1}: {e}")
