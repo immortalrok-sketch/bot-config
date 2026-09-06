@@ -424,7 +424,7 @@ HTML_TEMPLATE = """
 </div>
 
         <div class="grid">
-            {% for win_name, raw_state in windows.items() %}
+            {% for win_name, raw_state in windows|dictsort %}
             {% set status = raw_state.status if raw_state is mapping else raw_state %}
             {% set stats = raw_state.stats if raw_state is mapping and raw_state.stats else {} %}
 
