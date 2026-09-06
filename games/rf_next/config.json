@@ -62,9 +62,9 @@
   "state_rois": {
     "auto_hunting_zone": {
       "x_pct": 0.9385,
-      "y_pct": 0.7360,
+      "y_pct": 0.7320,
       "w_pct": 0.0375,
-      "h_pct": 0.0667
+      "h_pct": 0.0700
     },
     "auto_hunting_saving_zone": {
       "x_pct": 0.42,
