@@ -1,0 +1,7 @@
+local_node.json
+debug_crops/
+logs/
+cache/
+temp_update.zip
+temp_extracted/
+__pycache__/
