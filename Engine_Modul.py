@@ -13,12 +13,11 @@ if BASE_DIR not in sys.path:
 try:
     from updater import load_or_create_node_config, check_and_apply_update, restart_process
 
-    # Дефолтные данные для первичной генерации local_node.json
     DEFAULT_NODE = {
         "pc_name": "Rig-Main",
         "is_server_pc": True,
         "server_ip": "127.0.0.1",
-        "github_repo": "ВАШ_GITHUB_USER/ВАШ_REPO",  # Заменить на свой репозиторий
+        "github_repo": "ВАШ_GITHUB_USER/ВАШ_REPO",
         "telegram": {
             "enabled": True,
             "token": "8945163867:AAF3Snlxz2J5K0acEujCzhdbH57zgD1MPHw",
@@ -26,17 +25,26 @@ try:
         }
     }
 
-    NODE_CFG = load_or_create_node_config(DEFAULT_NODE)
+    # Жесткая привязка пути к корневой директории BASE_DIR
+    node_cfg_path = os.path.join(BASE_DIR, "local_node.json")
+    NODE_CFG = load_or_create_node_config(DEFAULT_NODE, filepath=node_cfg_path)
 
     IS_SERVER_PC = NODE_CFG.get("is_server_pc", True)
     SERVER_IP = NODE_CFG.get("server_ip", "127.0.0.1")
     PC_NAME = NODE_CFG.get("pc_name", "Rig-Main")
     GITHUB_REPO = NODE_CFG.get("github_repo")
+    AUTO_UPDATE = NODE_CFG.get("auto_update", True)
 
-    # Проверка обновлений из GitHub до захода в основной цикл
-    if GITHUB_REPO and GITHUB_REPO != "ВАШ_GITHUB_USER/ВАШ_REPO":
+    print(f"[INIT] Нода: '{PC_NAME}' | Режим Сервера: {IS_SERVER_PC} | IP Сервера: {SERVER_IP}")
+
+    if AUTO_UPDATE and GITHUB_REPO and GITHUB_REPO != "ВАШ_GITHUB_USER/ВАШ_REPO":
         if check_and_apply_update(GITHUB_REPO, branch="main"):
             restart_process()
+
+except Exception as e:
+    print(f"[UPDATER WARN] Сбой инициализации автообновления: {e}")
+    NODE_CFG = {}
+    IS_SERVER_PC, SERVER_IP, PC_NAME = True, "127.0.0.1", "Rig-Main"
 
 except Exception as e:
     print(f"[UPDATER WARN] Сбой инициализации автообновления: {e}")
@@ -76,7 +84,8 @@ def main():
         launch_dashboard_in_background(host="0.0.0.0", port=5000)
         time.sleep(1)
 
-    dashboard = DashboardBridge(server_ip=SERVER_IP, pc_name=PC_NAME)
+    # Передаем явно параметр is_server из local_node.json
+    dashboard = DashboardBridge(server_ip=SERVER_IP, pc_name=PC_NAME, is_server=IS_SERVER_PC)
 
     # 2. Немедленный запуск мониторинга железа (CPU/GPU/RAM)
     print("\n=== Запуск фонового мониторинга железа (CPU/GPU) ===")
