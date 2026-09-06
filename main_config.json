@@ -1,0 +1,10 @@
+{
+    "active_games": [
+        "rf_next"
+    ],
+    "telegram": {
+        "enabled": true,
+        "token": "8945163867:AAF3Snlxz2J5K0acEujCzhdbH57zgD1MPHw",
+        "admin_chat_id": 478279274
+    }
+}
