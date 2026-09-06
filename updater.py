@@ -24,6 +24,46 @@ IGNORE_PATTERNS = {
     ".current_commit"
 }
 
+# Обязательные системные файлы ядра
+BASE_CRITICAL_FILES = [
+    "Engine_Modul.py",
+    "main_config.json"
+]
+
+
+def verify_integrity(base_dir: str) -> bool:
+    """Динамически проверяет наличие системного ядра и конфигов всех игр в папке games/."""
+    # 1. Проверка базовых системных файлов ядра
+    for rel_path in BASE_CRITICAL_FILES:
+        full_path = os.path.join(base_dir, rel_path)
+        if not os.path.exists(full_path):
+            print(f"[UPDATER WARN] Отсутствует критический системный файл: {rel_path}")
+            return False
+
+    # 2. Динамическая проверка папки games/ и всех конфигураций внутри
+    games_dir = os.path.join(base_dir, "games")
+    if not os.path.exists(games_dir):
+        print("[UPDATER WARN] Директория 'games/' не найдена!")
+        return False
+
+    game_folders = [
+        d for d in os.listdir(games_dir)
+        if os.path.isdir(os.path.join(games_dir, d))
+    ]
+
+    if not game_folders:
+        print("[UPDATER WARN] В папке 'games/' не обнаружено ни одного игрового модуля!")
+        return False
+
+    # Проверяем наличие config.json в каждой игровой директории
+    for game_name in game_folders:
+        game_cfg_path = os.path.join(games_dir, game_name, "config.json")
+        if not os.path.exists(game_cfg_path):
+            print(f"[UPDATER WARN] Отсутствует конфиг для игры '{game_name}': games/{game_name}/config.json")
+            return False
+
+    return True
+
 
 def load_or_create_node_config(default_data: dict, filepath: str = None) -> dict:
     """Загружает локальный паспорт ПК или создает его из дефолтных данных."""
@@ -68,23 +108,32 @@ def get_remote_commit_sha(repo_owner_repo: str, branch: str = "main") -> str:
 
 def check_and_apply_update(repo_owner_repo: str, branch: str = "main") -> bool:
     """
-    Проверяет SHA коммита и скачивает zip с обходом CDN-кэша GitHub.
-    Возвращает True, если были применены обновления (требуется рестарт).
+    Проверяет целостность и SHA коммита.
+    Автоматически скачивает архив, если файлы отсутствуют или вышло обновление.
     """
+    # 1. Проверка физической целостности файлов на диске
+    files_ok = verify_integrity(BASE_DIR)
+    if not files_ok and os.path.exists(COMMIT_FILE):
+        print("[UPDATER] Нарушена целостность структуры проекта! Сбрасываем кэш версии...")
+        try:
+            os.remove(COMMIT_FILE)
+        except Exception as e:
+            print(f"[UPDATER WARN] Не удалось удалить {COMMIT_FILE}: {e}")
+
     remote_sha = get_remote_commit_sha(repo_owner_repo, branch)
 
-    # 1. Быстрая проверка по локальному SHA
-    if remote_sha and os.path.exists(COMMIT_FILE):
+    # 2. Быстрая проверка по SHA (сработает ТОЛЬКО если файлы целы)
+    if files_ok and remote_sha and os.path.exists(COMMIT_FILE):
         try:
             with open(COMMIT_FILE, "r", encoding="utf-8") as f:
                 local_sha = f.read().strip()
             if local_sha == remote_sha:
-                print("[UPDATER] Установлена последняя версия (SHA совпадает).")
+                print("[UPDATER] Установлена последняя версия (SHA совпадает, структура цела).")
                 return False
         except Exception as e:
             print(f"[UPDATER WARN] Ошибка чтения {COMMIT_FILE}: {e}")
 
-    # 2. Формирование URL с Cache-Buster
+    # 3. Формирование URL с обходом кэша и выкачивание архива
     timestamp = int(time.time())
     url = f"https://github.com/{repo_owner_repo}/archive/refs/heads/{branch}.zip?nocache={timestamp}"
     temp_zip = os.path.join(BASE_DIR, "temp_update.zip")
@@ -114,7 +163,6 @@ def check_and_apply_update(repo_owner_repo: str, branch: str = "main") -> bool:
         for root, dirs, files in os.walk(extracted_root):
             rel_path = os.path.relpath(root, extracted_root)
 
-            # Пропускаем игнорируемые директории
             if any(part in IGNORE_PATTERNS for part in rel_path.split(os.sep)):
                 continue
 
@@ -139,10 +187,10 @@ def check_and_apply_update(repo_owner_repo: str, branch: str = "main") -> bool:
 
                 if should_copy:
                     shutil.copy2(src_file, dst_file)
-                    print(f"[UPDATER] Обновлен файл: {os.path.basename(dst_file)}")
+                    print(f"[UPDATER] Обновлен файл: {os.path.relpath(dst_file, BASE_DIR)}")
                     updated = True
 
-        # Сохраняем актуальный SHA после успешного применения
+        # Сохраняем SHA после успешной сборки
         if remote_sha:
             with open(COMMIT_FILE, "w", encoding="utf-8") as f:
                 f.write(remote_sha)
@@ -167,7 +215,6 @@ def restart_process():
     python_exe = sys.executable
     script_path = os.path.abspath(sys.argv[0])
 
-    # Формируем список аргументов для Popen
     args = [python_exe, script_path] + sys.argv[1:]
 
     subprocess.Popen(args)
