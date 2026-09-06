@@ -8,6 +8,7 @@ import time
 import re
 import threading
 import logging
+import json
 from pathlib import Path
 from flask import Flask, render_template_string, jsonify, request
 from collections import defaultdict
@@ -27,7 +28,7 @@ START_TIME = time.time()
 
 # === Настройки цены бриллиантов ===
 DIAMOND_PRICE_USD = {
-    "rf_next": 0.006,   # $ за 1 бриллиант RF
+    "rf_next": 0.005,   # $ за 1 бриллиант RF
     "ymir": 0.50,       # $ за 1 бриллиант Ymir
     "vampir": 0.30,
     "default": 0.50
@@ -39,6 +40,13 @@ DEFAULT_STATS = {
     "combat_power": 0,
     "diamonds": 0
 }
+
+def load_dashboard_ocr_rules() -> dict:
+    rules = {
+        "level": (1, 3),
+        "combat_power": (5, 6),
+        "diamonds": (3, 5),  # обязательно 3
+    }
 
 # Внутрипамятные хранилища для Master-сервера
 cluster_states = {}
@@ -70,10 +78,6 @@ STAT_DIGIT_LEN = load_dashboard_ocr_rules()
 # dashboard_app.py (Строки ~64-88)
 
 def sanitize_stats(stats: dict) -> dict:
-    """
-    Отфильтровывает некорректные значения статов на основе длин из config.json.
-    Невалидные ключи отбрасываются, сохраняя предыдущие значения на дашборде.
-    """
     if not isinstance(stats, dict):
         return {}
 
@@ -85,20 +89,20 @@ def sanitize_stats(stats: dict) -> dict:
         if key in STAT_DIGIT_LEN:
             min_len, max_len = STAT_DIGIT_LEN[key]
             digits_only = "".join(ch for ch in str(val) if ch.isdigit())
-            
-            # Если количество цифр вне диапазона [min, max] — игнорируем обновляемое поле
+            if not digits_only:
+                continue
             if not (min_len <= len(digits_only) <= max_len):
                 continue
 
-        # ВСТАВКА: Фильтр отображения для diamonds (все что меньше 500 превращаем в 0)
         if key == "diamonds":
             try:
                 num_val = int(val)
-                val = num_val if num_val >= 500 else 0
             except (ValueError, TypeError):
-                val = 0
-
-        clean_stats[key] = val
+                continue
+            # 160 проходит; 50 на панели как 0 (если так хочешь)
+            clean_stats[key] = num_val if num_val >= 100 else 0
+        else:
+            clean_stats[key] = val
 
     return clean_stats
 
