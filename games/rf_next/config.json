@@ -39,10 +39,10 @@
       "color": "orange"
     },
     "combat_power": {
-      "x_pct": 0.1550,
+      "x_pct": 0.1490,
       "y_pct": 0.9680,
-      "w_pct": 0.042,
-      "h_pct": 0.017,
+      "w_pct": 0.044,
+      "h_pct": 0.018,
       "color": "orange"
     },
     "diamonds": {
