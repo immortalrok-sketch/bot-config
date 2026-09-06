@@ -540,11 +540,13 @@ def api_update_sys_stats():
 class DashboardBridge:
     """Универсальный мост: если локальный ПК — пишет в память, если Воркер — шлет по HTTP."""
 
-    def __init__(self, server_ip: str = "127.0.0.1", pc_name: str = "Rig-Main", port: int = 5000):
+    def __init__(self, server_ip: str = "127.0.0.1", pc_name: str = "Rig-Main", port: int = 5000, is_server: bool = True):
         self.server_ip = server_ip
         self.pc_name = pc_name
         self.port = port
-        self.is_local = server_ip in ("127.0.0.1", "localhost", "0.0.0.0")
+        self.is_server = is_server
+        # Поле is_local строго True только если ПК одновременно Сервер И указывает на localhost
+        self.is_local = is_server and (server_ip in ("127.0.0.1", "localhost", "0.0.0.0"))
         self.base_url = f"http://{self.server_ip}:{self.port}"
 
     def _send_async_post(self, endpoint: str, payload: dict):
