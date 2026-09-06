@@ -344,8 +344,6 @@ class HUDReader:
         # ocr_reader.py -> Внутри метода _is_valid_value
 
         if key == "diamonds":
-            # УБРАНО: if value < 500: return False (OCR должен уметь считывать 131, 151 и т.д.)
-
             # Холодный старт: нужно 3 одинаковых считывания подряд
             if not current_val or current_val == 0:
                 return bool(
@@ -536,7 +534,7 @@ class HUDReader:
                             self.cache[window_name][key] = val
                             break
                     else:
-                        if key == "diamonds" and int(val) < 500:
+                        if key == "diamonds" and int(val) < 1: # смеша значения которое начинает учяствовать в голосовании
                             continue
                         candidates.append(int(val))
 
