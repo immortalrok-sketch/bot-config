@@ -1,0 +1,21 @@
+{
+    "launcher": {
+        "path": "F:/LegendOfYmirG/launcher/LegendOfYmirGLauncher.exe",
+        "window_title": "Legend of YMIR",
+        "startup_wait_sec": 8
+    },
+    "game": {
+        "window_title": "YmirGL",
+        "max_windows": 1
+    },
+    "images": {
+        "play_button": "play.png"
+    },
+    "recognition": {
+        "confidence_play_button": 0.75
+    },
+    "timings": {
+        "play_button_timeout_sec": 15,
+        "game_launch_delay_min_sec": 25
+    }
+}

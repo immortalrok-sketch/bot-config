@@ -1,0 +1,32 @@
+{
+    "hp_bar": {
+        "x_pct": 0.0602,
+        "y_pct": 0.9058,
+        "w_pct": 0.1148,
+        "h_pct": 0.0246
+    },
+    "exp_percent": {
+        "x_pct": 0.0398,
+        "y_pct": 0.9565,
+        "w_pct": 0.05,
+        "h_pct": 0.0362
+    },
+    "diamonds": {
+        "x_pct": 0.3586,
+        "y_pct": 0.0087,
+        "w_pct": 0.0617,
+        "h_pct": 0.0362
+    },
+    "battle_power": {
+        "x_pct": 0.1602,
+        "y_pct": 0.9623,
+        "w_pct": 0.0391,
+        "h_pct": 0.0261
+    },
+    "character_level": {
+        "x_pct": 0.0211,
+        "y_pct": 0.9101,
+        "w_pct": 0.0273,
+        "h_pct": 0.0348
+    }
+}

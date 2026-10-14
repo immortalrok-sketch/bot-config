@@ -1,0 +1,20 @@
+# Сгенерировано scan_requirements.py — только то, что реально импортируется в коде проекта.
+# Зависимости пакетов (aiohttp, pydantic и т.п.) pip подтянет сам.
+
+# --- Обязательные ---
+aiogram==3.31.0
+aiohttp==3.14.3
+Flask==3.1.3
+numpy==2.5.0
+opencv-python==5.0.0.93
+pillow==12.3.0
+psutil==7.2.2
+PyAutoGUI==0.9.54
+pywin32==312
+rapidocr-onnxruntime==1.2.3
+requests==2.34.2
+
+# --- Опциональные (импорт внутри try/except, без них код работает с ограничениями) ---
+nvidia-ml-py==13.610.43
+pytesseract==0.3.13
+WMI==1.5.1

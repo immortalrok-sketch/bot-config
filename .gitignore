@@ -1,0 +1,14 @@
+# Python / IDE
+__pycache__/
+*.pyc
+.vs/
+.venv/
+venv/
+
+# Логи и отладка
+logs/
+*.log
+debug_crops/
+
+# Секреты и настройки конкретной машины (токен Telegram, IP ноды)
+local_node.json
