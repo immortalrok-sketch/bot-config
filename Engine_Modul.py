@@ -157,14 +157,23 @@ def main():
                     f"завершилась с ошибкой."
                 )
 
-            launch_delay = config.get_cfg_val(
-                game_cfg, "timings", "game_launch_delay_min_sec", 10
-            )
+            # Ждём появления НОВОГО окна игры, а не фиксированную паузу: на медленных
+            # машинах игра грузится дольше. Пока окно не появилось, нельзя запускать
+            # лаунчер заново для того же слота.
+            min_wait = config.get_cfg_val(game_cfg, "timings", "game_launch_delay_min_sec", 10)
+            max_wait = config.get_cfg_val(game_cfg, "timings", "game_window_timeout_sec", 90)
+            windows_before = len(hwnds)
             print(
-                f"[Загрузка] Ожидание {launch_delay} сек "
-                f"перед повторным сканированием окон..."
+                f"[Загрузка] Жду окно #{current_slot}: минимум {min_wait} сек, "
+                f"максимум {max_wait} сек..."
             )
-            time.sleep(launch_delay)
+            time.sleep(min_wait)
+            waited = min_wait
+            hwnds = windows.get_game_windows(game_title) if game_title else []
+            while launcher_success and len(hwnds) <= windows_before and waited < max_wait:
+                time.sleep(2)
+                waited += 2
+                hwnds = windows.get_game_windows(game_title) if game_title else []
 
             hwnds = windows.get_game_windows(game_title) if game_title else []
 
