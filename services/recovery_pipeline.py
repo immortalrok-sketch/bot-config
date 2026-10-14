@@ -124,14 +124,21 @@ class GameRelauncher:
                 self._offline_since[display_name] = time.time()
                 return None
 
-            launch_delay = game_cfg.get("timings", {}).get("game_launch_delay_min_sec", 15)
-            logger.info(f"[Recovery] Ожидание появления окна {launch_delay} сек (из конфига)...")
-            time.sleep(launch_delay)
-
-            post_windows = [
-                h for h in windows.get_game_windows(game_title, only_visible=True)
-                if h not in busy
-            ]
+            # Ждём появления нового окна не фиксированную паузу, а до таймаута:
+            # на медленных машинах игра грузится дольше минимальной паузы.
+            timings = game_cfg.get("timings", {})
+            min_wait = timings.get("game_launch_delay_min_sec", 15)
+            max_wait = timings.get("game_window_timeout_sec", 90)
+            logger.info(
+                f"[Recovery] Жду новое окно: минимум {min_wait} сек, максимум {max_wait} сек..."
+            )
+            time.sleep(min_wait)
+            waited = min_wait
+            post_windows = self._free_windows(game_title, busy)
+            while not post_windows and waited < max_wait:
+                time.sleep(2)
+                waited += 2
+                post_windows = self._free_windows(game_title, busy)
             if not post_windows:
                 logger.error(f"[Recovery] Новое окно '{display_name}' не появилось после перезапуска.")
                 self._offline_since[display_name] = time.time()
@@ -148,6 +155,14 @@ class GameRelauncher:
             logger.error(f"[Recovery] Ошибка перезапуска '{display_name}': {err}")
             self._offline_since[display_name] = time.time()
             return None
+
+    @staticmethod
+    def _free_windows(game_title: str, busy) -> list:
+        """Окна игры, которые ещё не закреплены за другими записями."""
+        return [
+            h for h in windows.get_game_windows(game_title, only_visible=True)
+            if h not in busy
+        ]
 
     def _place_window_to_its_slot(self, hwnd: int, slot_index: int, game_cfg: Dict[str, Any]) -> None:
         """Вспомогательный метод точечной расстановки окна в его ячейку."""
