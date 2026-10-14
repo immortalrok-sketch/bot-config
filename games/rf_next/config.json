@@ -5,22 +5,22 @@
     "window_title": "Netmarble Launcher",
     "startup_wait_sec": 12
   },
-  "launcher_clicks": [
+"launcher_clicks": [
     {
       "step": "select_first_account",
-      "roi": { "x_pct": 0.04, "y_pct": 0.703, "w_pct": 0.2, "h_pct": 0.045 },
-      "wait_after_sec": [2.0, 3.0],
+      "roi": { "x_pct": 0.0292, "y_pct": 0.7735, "w_pct": 0.0113, "h_pct": 0.0191 },
+      "wait_after_sec": [1.5, 2.5],
       "when": "slot_index == 1"
     },
     {
       "step": "select_second_account",
-      "roi": { "x_pct": 0.282, "y_pct": 0.699, "w_pct": 0.034, "h_pct": 0.054 },
-      "wait_after_sec": [12.0, 14.0],
+      "roi": { "x_pct": 0.2283, "y_pct": 0.7662, "w_pct": 0.0160, "h_pct": 0.0279 },
+      "wait_after_sec": [10.0, 12.0],
       "when": "slot_index > 1"
     },
     {
       "step": "play_button",
-      "roi": { "x_pct": 0.030, "y_pct": 0.778, "w_pct": 0.327, "h_pct": 0.133 },
+      "roi": { "x_pct": 0.0868, "y_pct": 0.8559, "w_pct": 0.1330, "h_pct": 0.0485 },
       "wait_after_sec": [3.0, 4.5],
       "when": "always"
     }
@@ -83,7 +83,7 @@
   "state_rois": {
     "auto_hunting_zone": {
       "x_pct": 0.9385,
-      "y_pct": 0.7360,
+      "y_pct": 0.7285,
       "w_pct": 0.0375,
       "h_pct": 0.0667
     },
