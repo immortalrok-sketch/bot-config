@@ -3,6 +3,7 @@
 Слой SERVICES. Master + Worker.
 """
 import sys
+import atexit
 import time
 import re
 import os
@@ -22,6 +23,8 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from services.farm_ledger import FarmLedger, DiamondAlerts
 
 app = Flask(__name__)
 START_TIME = time.time()
@@ -44,8 +47,6 @@ cluster_states = {}
 system_states = {}
 last_seen = {}       # pc_name -> ts
 node_ips = {}        # pc_name -> ip
-# pc_name -> {"engine_running": bool, "watchdog": bool, "ts": float}
-node_meta = {}
 _local_tracked = []  # список окон этой ноды [{hwnd, display_name, ...}]
 
 STALE_AFTER_SEC = 60
@@ -64,67 +65,13 @@ def set_local_tracked_windows(windows: list) -> None:
     global _local_tracked
     _local_tracked = list(windows or [])
 
-def _close_hwnd(hwnd) -> bool:
-    try:
-        import win32gui
-        import win32con
-        if not hwnd or not win32gui.IsWindow(hwnd):
-            return False
-        win32gui.PostMessage(int(hwnd), win32con.WM_CLOSE, 0, 0)
-        return True
-    except Exception as e:
-        print(f"[NODE_CONTROL] close hwnd error: {e}", flush=True)
-        return False
-
-
-def _close_tracked_windows(instance=None) -> int:
-    """
-    instance=None → все окна из _local_tracked
-    instance=display_name → одно окно
-    """
-    closed = 0
-    for w in list(_local_tracked):
-        if not isinstance(w, dict):
-            continue
-        name = w.get("display_name")
-        hwnd = w.get("hwnd")
-        if instance is not None and str(name) != str(instance):
-            continue
-        if _close_hwnd(hwnd):
-            closed += 1
-            print(f"[NODE_CONTROL] closed window {name} hwnd={hwnd}", flush=True)
-    return closed
 
 def apply_node_command(action: str, instance=None) -> dict:
+    """Единая логика start/pause/restart/exit на ЭТОЙ ноде."""
     action = (action or "").lower().strip()
     inst = str(instance) if instance not in (None, "", "null") else None
 
-    # алиасы из Telegram
-    if action == "pause":
-        action = "stop"
-    if action in ("exit", "shutdown", "kill"):
-        action = "exit"
-
-    # --- закрытие окон: пауза + WM_CLOSE ---
-    if action in ("close_windows", "close_window"):
-        if action == "close_window" and inst:
-            NODE_CONTROL["paused_instances"].add(inst)
-            n = _close_tracked_windows(instance=inst)
-        else:
-            NODE_CONTROL["farm_running"] = False
-            NODE_CONTROL["paused_instances"].clear()
-            n = _close_tracked_windows(instance=None)
-        print(f"[NODE_CONTROL] {action} closed={n}", flush=True)
-        return {
-            "status": "ok",
-            "action": action,
-            "instance": inst,
-            "closed": n,
-            "farm_running": NODE_CONTROL["farm_running"],
-            "paused": list(NODE_CONTROL["paused_instances"]),
-        }
-
-    if action == "stop":
+    if action in ("stop", "pause"):
         if inst:
             NODE_CONTROL["paused_instances"].add(inst)
         else:
@@ -145,26 +92,23 @@ def apply_node_command(action: str, instance=None) -> dict:
             NODE_CONTROL["paused_instances"].clear()
         NODE_CONTROL["restart_requested"] = True
 
-    elif action == "close":
+    elif action in ("exit", "shutdown", "close"):
         NODE_CONTROL["farm_running"] = False
-        NODE_CONTROL["paused_instances"].clear()
-
-    elif action == "exit":
-        NODE_CONTROL["farm_running"] = False
-        print("[NODE_CONTROL] exit — завершение процесса через 1с", flush=True)
 
         def _die():
-            time.sleep(1.0)
+            time.sleep(0.5)
             os._exit(0)
 
         threading.Thread(target=_die, daemon=True).start()
+        print("[NODE_CONTROL] exit scheduled", flush=True)
 
     else:
         return {"status": "error", "message": f"unknown action {action}"}
 
     print(
         f"[NODE_CONTROL] action={action} instance={inst} "
-        f"farm={NODE_CONTROL['farm_running']} paused={NODE_CONTROL['paused_instances']}",
+        f"farm={NODE_CONTROL['farm_running']} "
+        f"paused={NODE_CONTROL['paused_instances']}",
         flush=True,
     )
     return {
@@ -202,6 +146,7 @@ def load_dashboard_ocr_rules() -> dict:
 # Дефолты на случай, если для конкретной игры ничего не задано
 DEFAULT_DIGIT_LEN = load_dashboard_ocr_rules()
 DEFAULT_MIN_DIAMONDS = 100
+DEFAULT_MAX_GAIN = 1000   # крупнее за одно показание — не фарм (перевод, покупка, сбой чтения)
 
 # Оставлено для обратной совместимости (если где-то ещё используется напрямую)
 STAT_DIGIT_LEN = DEFAULT_DIGIT_LEN
@@ -223,13 +168,15 @@ def get_game_dashboard_rules(game_key: str) -> dict:
     """
     game_key = (game_key or "").lower().strip()
     if not game_key:
-        return {"digit_len": DEFAULT_DIGIT_LEN, "min_diamonds": DEFAULT_MIN_DIAMONDS}
+        return {"digit_len": DEFAULT_DIGIT_LEN, "min_diamonds": DEFAULT_MIN_DIAMONDS,
+                "max_gain": DEFAULT_MAX_GAIN}
 
     if game_key in _dashboard_rules_cache:
         return _dashboard_rules_cache[game_key]
 
     digit_len = DEFAULT_DIGIT_LEN.copy()
     min_diamonds = DEFAULT_MIN_DIAMONDS
+    max_gain = DEFAULT_MAX_GAIN
 
     cfg_path = PROJECT_ROOT / "games" / game_key / "config.json"
     try:
@@ -245,12 +192,14 @@ def get_game_dashboard_rules(game_key: str) -> dict:
 
             if "dashboard_min_diamonds" in ocr_cfg:
                 min_diamonds = int(ocr_cfg["dashboard_min_diamonds"])
+            if "farm_max_gain_per_reading" in ocr_cfg:
+                max_gain = int(ocr_cfg["farm_max_gain_per_reading"])
         else:
             print(f"[Дашборд] Конфиг '{game_key}' не найден по пути {cfg_path}, беру дефолты.")
     except Exception as e:
         print(f"[Дашборд WARN] Не удалось загрузить правила для '{game_key}': {e}. Беру дефолты.")
 
-    result = {"digit_len": digit_len, "min_diamonds": min_diamonds}
+    result = {"digit_len": digit_len, "min_diamonds": min_diamonds, "max_gain": max_gain}
     _dashboard_rules_cache[game_key] = result
     return result
 
@@ -347,6 +296,34 @@ def get_formatted_uptime() -> str:
     return f"{days}д {hours:02d}ч {minutes:02d}м {seconds:02d}с"
 
 
+FARM = None
+ALERTS = None
+_farm_lock = threading.Lock()
+
+
+def _get_farm() -> FarmLedger:
+    """Учёт нафармленного создаётся при первом обращении (на воркерах он не нужен)."""
+    global FARM
+    if FARM is None:
+        with _farm_lock:
+            if FARM is None:
+                FARM = FarmLedger(
+                    max_gain_for=lambda g: get_game_dashboard_rules(g).get("max_gain", DEFAULT_MAX_GAIN)
+                )
+                atexit.register(FARM.flush, True)
+    return FARM
+
+
+def _ledger_record(pc_name: str, window_name: str, clean_stats: dict) -> None:
+    """Передать очередное показание бриллиантов окна в учёт нафармленного."""
+    if "diamonds" not in clean_stats:
+        return
+    try:
+        _get_farm().record(pc_name, window_name, get_game_prefix(window_name), clean_stats["diamonds"])
+    except Exception as e:
+        print(f"[FarmLedger] Ошибка учёта: {e}")
+
+
 def calc_diamonds_by_game():
     by_game = defaultdict(int)
     now = time.time()
@@ -365,13 +342,19 @@ def calc_diamonds_by_game():
                 diamonds = 0
             by_game[get_game_prefix(win_name)] += diamonds
     result = []
+    farm = _get_farm()
     for game, amount in sorted(by_game.items()):
         price = DIAMOND_PRICE_USD.get(game, DIAMOND_PRICE_USD["default"])
+        farmed = farm.totals(game)
         result.append({
             "game": game.upper(),
             "amount": amount,
             "usd": round(amount * price, 2),
             "price": price,
+            "today": farmed["today"],
+            "week": farmed["week"],
+            "month": farmed["month"],
+            "skipped": farmed["skipped_month"],
         })
     return result
 
@@ -409,6 +392,11 @@ HTML_TEMPLATE = """
     .diamond-game { color: #94a3b8; font-weight: bold; }
     .diamond-amount { color: #38bdf8; font-weight: bold; font-size: 19px; }
     .diamond-usd { color: #4ade80; font-size: 15px; font-weight: 600; }
+    .diamond-line { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+    .farm-line { color: #94a3b8; font-size: 12px; margin-top: 3px; }
+    .farm-line b { color: #4ade80; font-weight: 600; }
+    .farm-skip { color: #64748b; }
+    .farm-note { flex-basis: 100%; color: #64748b; font-size: 11px; }
     .rigs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; }
     @media (max-width: 1200px) { .rigs-grid { grid-template-columns: 1fr; } }
     .rig-section { background: #131a26; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }
@@ -454,11 +442,22 @@ HTML_TEMPLATE = """
         <span style="font-size:22px;">💎</span>
         {% for item in diamonds_by_game %}
         <div class="diamond-item">
-            <span class="diamond-game">{{ item.game }}:</span>
-            <span class="diamond-amount">{{ "{:,}".format(item.amount).replace(",", " ") }}</span>
-            <span class="diamond-usd">≈ ${{ item.usd }}</span>
+            <div>
+                <div class="diamond-line">
+                    <span class="diamond-game">{{ item.game }}:</span>
+                    <span class="diamond-amount">{{ "{:,}".format(item.amount).replace(",", " ") }}</span>
+                    <span class="diamond-usd">≈ ${{ item.usd }}</span>
+                </div>
+                <div class="farm-line">нафармлено:
+                    <b>+{{ "{:,}".format(item.today).replace(",", " ") }}</b> сегодня ·
+                    <b>+{{ "{:,}".format(item.week).replace(",", " ") }}</b> за 7 дн ·
+                    <b>+{{ "{:,}".format(item.month).replace(",", " ") }}</b> за 30 дн
+                    {% if item.skipped %}<span class="farm-skip">(исключено как переводы/пополнения: {{ "{:,}".format(item.skipped).replace(",", " ") }})</span>{% endif %}
+                </div>
+            </div>
         </div>
         {% endfor %}
+        <div class="farm-note">Нафармлено — рост баланса окон. Продажи и траты не вычитаются, переводы между окнами не считаются.</div>
     </div>
     {% endif %}
     <div class="rigs-grid">
@@ -528,9 +527,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-@app.route("/api/nodes", methods=["GET"])
-def api_nodes():
-    return jsonify(get_registered_nodes())
 
 @app.route("/")
 def index():
@@ -541,6 +537,15 @@ def index():
         uptime=get_formatted_uptime(),
         diamonds_by_game=calc_diamonds_by_game(),
     )
+
+
+@app.route("/api/farm")
+def api_farm():
+    """Нафармлено по играм (сегодня / 7 дн / 30 дн) и по окнам за сутки."""
+    return jsonify({
+        "games": calc_diamonds_by_game(),
+        "windows_today": _get_farm().window_totals(days=1),
+    })
 
 
 @app.route("/api/uptime")
@@ -579,6 +584,7 @@ def api_update_status():
         clean = sanitize_stats(raw_stats, game_key=game_key)
         if clean:
             cluster_states[pc_name][window_name]["stats"].update(clean)
+            _ledger_record(pc_name, window_name, clean)
 
     return jsonify({"status": "ok"})
 
@@ -597,24 +603,6 @@ def api_update_sys_stats():
     return jsonify({"status": "error"}), 400
 
 
-@app.route("/api/node_heartbeat", methods=["POST"])
-def api_node_heartbeat():
-    data = request.json or {}
-    pc_name = data.get("pc_name")
-    if not pc_name:
-        return jsonify({"status": "error", "message": "pc_name required"}), 400
-
-    ip = data.get("ip") or request.remote_addr
-    engine_running = bool(data.get("engine_running", False))
-
-    touch_pc(pc_name, ip)
-    node_meta[pc_name] = {
-        "engine_running": engine_running,
-        "watchdog": True,
-        "ts": time.time(),
-    }
-    return jsonify({"status": "ok"})
-
 @app.route("/api/node_command", methods=["POST"])
 def api_node_command():
     data = request.json or {}
@@ -623,6 +611,7 @@ def api_node_command():
     result = apply_node_command(action, instance)
     code = 200 if result.get("status") == "ok" else 400
     return jsonify(result), code
+
 
 @app.route("/api/screenshot", methods=["GET"])
 def api_screenshot():
@@ -729,6 +718,7 @@ class DashboardBridge:
         touch_pc(self.pc_name, self.node_ip)
 
         if self.is_local:
+            _ledger_record(self.pc_name, window_name, clean_stats)
             if self.pc_name not in cluster_states:
                 cluster_states[self.pc_name] = {}
             if window_name not in cluster_states[self.pc_name]:
@@ -765,15 +755,14 @@ class DashboardBridge:
 
 
 def get_registered_nodes() -> dict:
+    """Реестр ПК для Telegram."""
     now = time.time()
     nodes = {}
 
     main_windows = list(cluster_states.get("Rig-Main", {}).keys())
     if not main_windows and _local_tracked:
         main_windows = [
-            w.get("display_name")
-            for w in _local_tracked
-            if isinstance(w, dict) and w.get("display_name")
+            w.get("display_name") for w in _local_tracked if isinstance(w, dict) and w.get("display_name")
         ]
 
     nodes["Rig-Main"] = {
@@ -781,35 +770,20 @@ def get_registered_nodes() -> dict:
         "is_local": True,
         "status": "online",
         "windows": main_windows,
-        "ip": node_ips.get("Rig-Main") or "127.0.0.1",
-        "engine_running": True,
-        "watchdog_port": 5001,
+        "ip": "127.0.0.1",
     }
 
-    known = set(last_seen.keys()) | set(node_meta.keys())
-    for pc_name in known:
+    for pc_name, ts in list(last_seen.items()):
         if pc_name == "Rig-Main":
             continue
-        ts = last_seen.get(pc_name, 0)
-        meta = node_meta.get(pc_name) or {}
-        meta_ts = meta.get("ts", 0)
-        alive = (now - max(ts, meta_ts)) <= STALE_AFTER_SEC
-        engine_running = bool(meta.get("engine_running", False)) if alive else False
-        if not alive:
-            status = "offline"
-        elif engine_running:
-            status = "online"
-        else:
-            status = "idle"  # watchdog жив, Engine выключен
-
+        is_alive = (now - ts) <= STALE_AFTER_SEC
+        windows = list(cluster_states.get(pc_name, {}).keys())
         nodes[pc_name] = {
             "name": pc_name,
             "is_local": False,
-            "status": status,
-            "windows": list(cluster_states.get(pc_name, {}).keys()),
+            "status": "online" if is_alive else "offline",
+            "windows": windows,
             "ip": node_ips.get(pc_name),
-            "engine_running": engine_running,
-            "watchdog_port": 5001,
         }
     return nodes
 
@@ -820,13 +794,29 @@ def start_dashboard_server(host="0.0.0.0", port=5000):
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
+def _farm_loop() -> None:
+    """Раз в минуту: дописать историю на диск и проверить порог оповещения."""
+    global ALERTS
+    while True:
+        time.sleep(60)
+        try:
+            _get_farm().flush()
+            if ALERTS is None:
+                ALERTS = DiamondAlerts()
+            now = time.time()
+            complete = not any(now - ts > STALE_AFTER_SEC for ts in last_seen.values())
+            ALERTS.check(calc_diamonds_by_game(), complete)
+        except Exception as e:
+            print(f"[FarmLedger] Ошибка фонового цикла: {e}")
+
+
 def launch_dashboard_in_background(host="0.0.0.0", port=5000):
     cluster_states.clear()
     system_states.clear()
     last_seen.clear()
     node_ips.clear()
-    node_meta.clear()
 
     threading.Thread(target=start_dashboard_server, args=(host, port), daemon=True).start()
     threading.Thread(target=_stale_watcher, daemon=True).start()
+    threading.Thread(target=_farm_loop, daemon=True).start()
     print(f"[Дашборд] Веб-панель запущена на http://localhost:{port}")

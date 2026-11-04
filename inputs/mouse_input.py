@@ -18,18 +18,33 @@ def bezier_point(p0: Tuple[float, float], p1: Tuple[float, float],
                  p2: Tuple[float, float], p3: Tuple[float, float], t: float) -> Tuple[float, float]:
     """Вычисляет координату точки на кубической кривой Безье для шага t в диапазоне [0, 1]."""
     x = (1 - t)**3 * p0[0] + 3 * (1 - t)**2 * t * p1[0] + 3 * (1 - t) * t**2 * p2[0] + t**3 * p3[0]
-    y = (1 - t)**3 * p0[1] + 3 * (1 - t)**2 * t * p1[1] + 3 * (1 - t) * t**2 * p2[2 if len(p2)>2 else 1] if False else (1 - t)**3 * p0[1] + 3 * (1 - t)**2 * t * p1[1] + 3 * (1 - t) * t**2 * p2[1] + t**3 * p3[1]
+    y = (1 - t)**3 * p0[1] + 3 * (1 - t)**2 * t * p1[1] + 3 * (1 - t) * t**2 * p2[1] + t**3 * p3[1]
     return x, y
 
 
-def human_move(target_x: int, target_y: int) -> None:
+def point_on_screen(x: int, y: int) -> bool:
+    """True, если точка лежит в пределах виртуального экрана (всех мониторов вместе)."""
+    vx = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+    vy = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+    vw = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
+    vh = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+    return vx <= x < vx + vw and vy <= y < vy + vh
+
+
+def human_move(target_x: int, target_y: int) -> bool:
     """
     Перемещает курсор мыши в точку (target_x, target_y) по биомеханической дуге
     с замедлением на финише и микро-тремором.
+    Возвращает False, если точка вне экрана (тогда мышь не двигается вообще):
+    иначе курсор «ехал» бы к недостижимой точке десятки секунд.
     """
+    if not point_on_screen(target_x, target_y):
+        print(f"[Mouse] Движение отменено: точка ({target_x}, {target_y}) вне экрана.")
+        return False
+
     start_x, start_y = win32api.GetCursorPos()
     if (start_x, start_y) == (target_x, target_y):
-        return
+        return True
 
     # Генерация случайных контрольных точек Безье для симуляции дуги руки
     distance = math.hypot(target_x - start_x, target_y - start_y)
@@ -42,7 +57,7 @@ def human_move(target_x: int, target_y: int) -> None:
     ctrl2_y = start_y + (target_y - start_y) * random.uniform(0.6, 0.8) + random.uniform(-offset * 0.5, offset * 0.5)
 
     # Количество шагов зависит от расстояния (чем дальше — тем больше шагов)
-    steps = max(20, int(distance / random.uniform(12.0, 18.0)))
+    steps = min(max(20, int(distance / random.uniform(12.0, 18.0))), 250)
     
     for i in range(steps + 1):
         t = i / steps
@@ -58,15 +73,17 @@ def human_move(target_x: int, target_y: int) -> None:
 
         win32api.SetCursorPos((int(curr_x), int(curr_y)))
         time.sleep(random.uniform(0.002, 0.006))
+    return True
 
 
-def human_click(x: int, y: int) -> None:
+def human_click(x: int, y: int) -> bool:
     """
     Полный цикл человекоподобного клика:
     Плавная доводка курсора -> Пауза прицеливания -> Зажатие -> Удержание -> Отпускание.
     """
-    # 1. Плавная доводка мышью
-    human_move(x, y)
+    # 1. Плавная доводка мышью (если точка вне экрана — клика не будет)
+    if not human_move(x, y):
+        return False
     
     # 2. Небольшая задержка "прицеливания" перед кликом (80 - 160 мс)
     time.sleep(random.uniform(0.08, 0.16))
@@ -82,3 +99,4 @@ def human_click(x: int, y: int) -> None:
     
     # 6. Микро-задержка после выполнения клика
     time.sleep(random.uniform(0.1, 0.25))
+    return True

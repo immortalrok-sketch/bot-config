@@ -33,6 +33,7 @@ graph TB
         services/__init__
         services/dashboard_app
         services/debug_logger
+        services/farm_ledger
         services/recovery_pipeline
         services/system_monitor
         services/telegram_bot
@@ -85,6 +86,7 @@ graph TB
     core/state_detector --> vision/ocr_reader
     core/state_detector --> vision/vision
     core/state_machine --> services/debug_logger
+    services/dashboard_app --> services/farm_ledger
     services/dashboard_app --> vision/vision
     services/recovery_pipeline --> core/launcher
     services/recovery_pipeline --> inputs/windows

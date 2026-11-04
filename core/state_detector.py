@@ -332,6 +332,88 @@ def _is_maximized_or_minimized(hwnd: int) -> bool:
         return False
 
 
+def load_perf_cfg() -> dict:
+    """
+    Настройки нагрузки на процессор (необязательные), local_node.json -> "performance":
+        "ocr_interval_sec": 30,          # как часто читать статы каждого окна
+        "ocr_debug_interval_sec": 0,     # как часто сохранять отладочные кропы OCR, сек (0 — выключено;
+                                         # при настройке новой игры поставь 10–60)
+        "priority": "below_normal",      # приоритет процесса бота ("normal" — не менять)
+        "cpu_threads": 0,                # ограничить бота N логическими ядрами (0 — без ограничения)
+        "tesseract_single_thread": true, # Tesseract в один поток (быстрее на мелких кропах)
+        "report_sec": 60                 # как часто писать в лог строку [Perf] (0 — выключить)
+    """
+    try:
+        with open(os.path.join(ROOT_DIR, "local_node.json"), "r", encoding="utf-8") as f:
+            perf = (json.load(f) or {}).get("performance") or {}
+        return perf if isinstance(perf, dict) else {}
+    except Exception:
+        return {}
+
+
+def apply_process_limits(perf: dict) -> None:
+    """Понижает приоритет процесса бота (игры важнее) и при желании ограничивает ядра."""
+    try:
+        import psutil
+        proc = psutil.Process()
+        if os.name == "nt" and str(perf.get("priority", "below_normal")).lower() == "below_normal":
+            proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            logger.info("[Perf] Приоритет процесса бота: ниже обычного (игры получают процессор первыми).")
+        threads = int(perf.get("cpu_threads", 0) or 0)
+        if threads > 0:
+            cpus = proc.cpu_affinity()
+            if threads < len(cpus):
+                proc.cpu_affinity(cpus[-threads:])
+                logger.info(f"[Perf] Бот ограничен {threads} логическими ядрами из {len(cpus)}.")
+    except Exception as e:
+        logger.warning(f"[Perf] Не удалось применить ограничения процесса: {e}")
+    if perf.get("tesseract_single_thread", True):
+        # Tesseract по умолчанию использует все ядра и на мелких кропах тратит время на потоки
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+
+def is_window_hung(hwnd: int) -> bool:
+    """True, если Windows считает окно зависшим (статус «Не отвечает»)."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.IsHungAppWindow(hwnd))
+    except Exception:
+        return False
+
+
+# Процессы, которые нельзя завершать ни при каких условиях (страховка от ошибки с HWND)
+_KILL_DENYLIST = {
+    "explorer.exe", "python.exe", "pythonw.exe", "py.exe", "svchost.exe", "dwm.exe",
+    "winlogon.exe", "csrss.exe", "services.exe", "lsass.exe", "cmd.exe", "conhost.exe",
+}
+
+
+def kill_window_process(hwnd: int) -> bool:
+    """Принудительно завершает процесс, которому принадлежит окно (вместе с дочерними)."""
+    try:
+        import psutil
+        import win32process
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if not pid or pid == os.getpid():
+            return False
+        proc = psutil.Process(pid)
+        name = (proc.name() or "").lower()
+        if name in _KILL_DENYLIST:
+            logger.error(f"[Мониторинг] Отказ завершать '{name}' (PID {pid}) — в списке защищённых.")
+            return False
+        for child in proc.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+        proc.kill()
+        logger.warning(f"[Мониторинг] Завершён процесс '{name}' (PID {pid}).")
+        return True
+    except Exception as e:
+        logger.error(f"[Мониторинг] Не удалось завершить процесс окна {hwnd}: {e}")
+        return False
+
+
 class WindowStateMonitor:
     def __init__(
         self,
@@ -364,6 +446,16 @@ class WindowStateMonitor:
         self._cycle_count = 0
         self.realign_every_n = 3            # проверять положение окон раз в 3 цикла (~9 сек)
         self._realign_fixes: Dict[str, int] = {}
+        self._hung_since: Dict[str, float] = {}   # display_name -> когда окно перестало отвечать
+        self._hung_reported: set = set()          # окна, о зависании которых уже сообщили
+        self.perf_cfg = load_perf_cfg()
+        self.ocr_interval_sec = float(self.perf_cfg.get("ocr_interval_sec", 30))
+        self.ocr_debug_interval_sec = float(self.perf_cfg.get("ocr_debug_interval_sec", 0))
+        self._ocr_next: Dict[str, float] = {}         # когда окну пора читать статы
+        self._ocr_debug_next: Dict[str, float] = {}   # когда окну пора сохранять отладочные кропы
+        self._perf: Dict[str, list] = {"state": [], "ocr": [], "cpu": []}
+        self._perf_last_report = time.time()
+        self._perf_proc = None
         self._last_good_stats: Dict[str, dict] = {}
         self._farm_paused_logged = False
 
@@ -406,6 +498,103 @@ class WindowStateMonitor:
         self._last_good_stats[display_name] = good
         return cleaned
 
+    def _ocr_debug_due(self, display_name: str, now: float) -> bool:
+        """Отладочные кропы/подробный вывод OCR — не каждый запуск, а раз в ocr_debug_interval_sec."""
+        interval = self.ocr_debug_interval_sec
+        if interval <= 0:
+            return False
+        if now >= self._ocr_debug_next.get(display_name, 0.0):
+            self._ocr_debug_next[display_name] = now + interval
+            return True
+        return False
+
+    def _perf_report(self) -> None:
+        """Раз в report_sec пишет в лог, сколько процессора берёт бот и что именно тяжёлое."""
+        report_sec = float(self.perf_cfg.get("report_sec", 60))
+        if report_sec <= 0:
+            return
+        try:
+            import psutil
+            if self._perf_proc is None:
+                self._perf_proc = psutil.Process()
+            cpu = self._perf_proc.cpu_percent(interval=None) / max(1, psutil.cpu_count() or 1)
+            self._perf["cpu"].append(cpu)
+        except Exception:
+            pass
+        now = time.time()
+        if now - self._perf_last_report < report_sec:
+            return
+
+        def stat(values: list) -> str:
+            if not values:
+                return "нет вызовов"
+            ms = [v * 1000 for v in values]
+            return f"{len(ms)} выз., ср. {sum(ms) / len(ms):.0f} мс, макс {max(ms):.0f} мс"
+
+        cpu_vals = self._perf["cpu"]
+        cpu_txt = (
+            f"ср. {sum(cpu_vals) / len(cpu_vals):.0f}% / пик {max(cpu_vals):.0f}% (от всего процессора)"
+            if cpu_vals else "нет данных"
+        )
+        logger.info(
+            f"[Perf] За {int(now - self._perf_last_report)} с: CPU бота {cpu_txt} | "
+            f"определение состояния: {stat(self._perf['state'])} | OCR статов: {stat(self._perf['ocr'])}"
+        )
+        for values in self._perf.values():
+            values.clear()
+        self._perf_last_report = now
+
+    def _check_hung(self, win: dict, display_name: str, hwnd: int) -> bool:
+        """
+        Детект зависшего окна («Не отвечает»). Настройка в config.json игры:
+            "hang_detection": {"enabled": true, "show_after_sec": 20, "not_responding_sec": 90}
+
+        Windows помечает окно «не отвечает» уже через ~5 секунд, а у игры такое бывает на
+        загрузках, переходах и разворачивании окна. Поэтому:
+          * первые show_after_sec секунд ничего не происходит — состояние на дашборде не меняется;
+          * дольше show_after_sec — True, окно показывается как DISCONNECTED;
+          * дольше not_responding_sec — процесс завершается, а дальше срабатывает обычный
+            recovery (окно пропадёт -> OFFLINE -> перезапуск через лаунчер).
+        """
+        cfg = (win.get("game_cfg") or {}).get("hang_detection") or {}
+        if not cfg.get("enabled", True):
+            self._hung_since.pop(display_name, None)
+            self._hung_reported.discard(display_name)
+            return False
+
+        if not is_window_hung(hwnd):
+            if display_name in self._hung_reported:
+                logger.info(f"[Мониторинг] '{display_name}': окно снова отвечает.")
+            self._hung_since.pop(display_name, None)
+            self._hung_reported.discard(display_name)
+            return False
+
+        now = time.time()
+        since = self._hung_since.setdefault(display_name, now)
+        limit = float(cfg.get("not_responding_sec", 90))
+        show_after = min(float(cfg.get("show_after_sec", 20)), limit)
+        elapsed = now - since
+
+        if elapsed < show_after:
+            return False                      # короткое подвисание — не трогаем и не шумим
+
+        if display_name not in self._hung_reported:
+            self._hung_reported.add(display_name)
+            logger.warning(
+                f"[Мониторинг] '{display_name}': окно не отвечает уже {int(elapsed)} сек. "
+                f"Если так будет {int(limit)} сек — перезапуск."
+            )
+        if elapsed < limit:
+            return True
+
+        logger.error(
+            f"[Мониторинг] '{display_name}': не отвечает {int(elapsed)} сек — завершаю процесс."
+        )
+        kill_window_process(hwnd)
+        self._hung_since.pop(display_name, None)
+        self._hung_reported.discard(display_name)
+        return True
+
     def start_monitoring_loop(self, tracked_windows: list, interval_sec: int = 3):
         if not tracked_windows:
             print("[Мониторинг] Список окон пуст.")
@@ -431,8 +620,9 @@ class WindowStateMonitor:
 
         print(
             f"\n[Мониторинг] {len(tracked_windows)} окон, интервал {interval_sec}с, "
-            f"OCR каждые {self.ocr_every_n} цикл(ов)"
+            f"OCR статов каждые {int(self.ocr_interval_sec)} сек на окно"
         )
+        apply_process_limits(self.perf_cfg)
 
         try:
             while True:
@@ -468,8 +658,13 @@ class WindowStateMonitor:
                     if hwnd and win32gui.IsWindow(hwnd):
                         win_game_name = win.get("game_name") or self.game_name
                         detector = self._get_detector(hwnd, game_name=win_game_name)
+                        _t0 = time.perf_counter()
                         current_state, _ = detector.detect_state(hwnd)
-                        if current_state in (
+                        self._perf["state"].append(time.perf_counter() - _t0)
+                        if self._check_hung(win, display_name, hwnd):
+                            # зависшее окно показываем красным и не сбрасываем счётчик попыток
+                            current_state = GameState.DISCONNECTED
+                        elif current_state in (
                             GameState.AUTO_HUNTING,
                             GameState.IN_GAME_IDLE,
                         ):
@@ -538,17 +733,29 @@ class WindowStateMonitor:
 
                     self.dashboard.update_status(display_name, current_state)
 
-                    tick = self._ocr_tick.get(display_name, 0) + 1
-                    self._ocr_tick[display_name] = tick
+                    # OCR статов — по времени для каждого окна, а не каждый цикл. Окна разнесены
+                    # по времени, чтобы они не читались одновременно (иначе пики нагрузки).
+                    ocr_now = time.time()
+                    due_at = self._ocr_next.get(display_name)
+                    if due_at is None:
+                        due_at = ocr_now + idx * self.ocr_interval_sec / max(1, len(tracked_windows))
+                        self._ocr_next[display_name] = due_at
                     if (
                         current_state
                         in (GameState.AUTO_HUNTING, GameState.IN_GAME_IDLE)
-                        and tick >= self.ocr_every_n
+                        and ocr_now >= due_at
                     ):
-                        self._ocr_tick[display_name] = 0
+                        self._ocr_next[display_name] = ocr_now + self.ocr_interval_sec
                         try:
+                            import vision.ocr_reader as ocr_module
                             from vision.ocr_reader import read_hud_stats
 
+                            # отладочные кропы и подробный вывод — не каждый запуск, а по расписанию
+                            reader = getattr(ocr_module, "_hud_reader_instance", None)
+                            if reader is not None:
+                                reader.debug_mode = self._ocr_debug_due(display_name, ocr_now)
+
+                            _t0 = time.perf_counter()
                             frame = capture_window_frame(hwnd)
                             if frame is not None:
                                 stats = read_hud_stats(
@@ -559,9 +766,11 @@ class WindowStateMonitor:
                                 )
                                 stats = self._stabilize_stats(display_name, stats)
                                 self.dashboard.update_stats(display_name, stats)
+                            self._perf["ocr"].append(time.perf_counter() - _t0)
                         except Exception as e:
                             logger.error(f"[Stats] {display_name}: {e}")
 
+                self._perf_report()
                 time.sleep(interval_sec)
         except KeyboardInterrupt:
             print("\n[Мониторинг] Остановлен.")

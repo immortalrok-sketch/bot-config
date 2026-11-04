@@ -33,6 +33,26 @@ def human_sleep(min_sec: float, max_sec: float) -> None:
 # КЛИКИ ПО ROI
 # ---------------------------------------------------------------------------
 
+def _wait_launcher_ready(hwnd: int, timeout: float = 12.0, min_w: int = 300, min_h: int = 200) -> bool:
+    """
+    Ждёт, пока окно лаунчера реально станет видимым и развёрнутым (после трея/сворачивания
+    Windows разворачивает окно не мгновенно). Если окно свёрнуто — возвращает его.
+    Только после этого можно кликать: иначе координаты клика берутся от свёрнутого окна.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not win32gui.IsWindow(hwnd):
+            return False
+        if win32gui.IsIconic(hwnd) or not win32gui.IsWindowVisible(hwnd):
+            windows.focus_window(hwnd)
+        else:
+            _, _, w, h = windows.get_client_area_rect(hwnd)
+            if w >= min_w and h >= min_h:
+                return True
+        time.sleep(0.5)
+    return False
+
+
 _COND_RE = re.compile(r"^\s*slot_index\s*(==|!=|>=|<=|>|<)\s*(\d+)\s*$")
 _OPS = {
     "==": operator.eq,
@@ -306,6 +326,11 @@ def run_launcher_logic(game_cfg: Dict[str, Any], slot_index: int = 1) -> bool:
 
     if not focused:
         logger.error("[GameLauncher] Лаунчер не вышел на передний план — клики отменены, чтобы не попасть в чужое окно.")
+        return False
+
+    # Ждём, пока окно полностью развернётся (не кликаем в свёрнутое)
+    if not _wait_launcher_ready(launcher_hwnd):
+        logger.error("[GameLauncher] Окно лаунчера не развернулось за отведённое время — клики отменены.")
         return False
 
     human_sleep(1.5, 2.5)  # Задержка на отрисовку UI после фокуса

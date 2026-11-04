@@ -97,6 +97,15 @@ def load_ocr_validation_config(config_path: str = "config.json") -> Tuple[Dict[s
 
     return digit_len, max_limits
 
+# --- Нагрузка на процессор ---
+# Прекратить чтение вариантов поля, как только какое-то значение набрало столько голосов
+# (0 — всегда читать все 4 варианта). В режиме отладки всегда читаются все варианты,
+# чтобы в debug_crops были все картинки v0..v3.
+EARLY_EXIT_VOTES = 2
+# Сколько раз за чтение одного поля можно запускать медленный режим RapidOCR с детекцией
+# текста (use_det=True), если быстрый режим вернул пустую строку.
+DET_FALLBACKS_PER_KEY = 1
+
 # Загрузка валидации строго от абсолютного корня проекта (ROOT_DIR)
 DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 DIGIT_LEN, MAX_LIMITS = load_ocr_validation_config(DEFAULT_CONFIG_PATH)
@@ -109,6 +118,7 @@ class HUDReader:
         self.loaded_configs: Dict[str, Dict[str, Any]] = {}
         self.diamond_history: Dict[str, list] = {}
         self.debug_mode = debug_mode
+        self._det_left = DET_FALLBACKS_PER_KEY
         self.debug_dir = os.path.join(ROOT_DIR, "debug_crops")
         os.makedirs(self.debug_dir, exist_ok=True)
         self._hclose_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 1))
@@ -254,7 +264,8 @@ class HUDReader:
                 raw_text = " ".join([line[1] for line in result])
         except Exception:
             pass
-        if not raw_text.strip():
+        if not raw_text.strip() and getattr(self, "_det_left", DET_FALLBACKS_PER_KEY) > 0:
+            self._det_left = getattr(self, "_det_left", DET_FALLBACKS_PER_KEY) - 1
             try:
                 result, _ = self.ocr(ocr_img, use_det=True, use_cls=False)
                 if result:
@@ -512,6 +523,7 @@ class HUDReader:
             candidates: List[int] = []
             is_float = (key == "exp_percent")
             dmin, dmax = digit_len.get(key, (1, 6))
+            self._det_left = DET_FALLBACKS_PER_KEY
 
             for idx, (var_img, _) in enumerate(variants):
                 # Сохраняем каждый бинарный/CLAHE вариант (v0, v1, v2...)
@@ -539,6 +551,12 @@ class HUDReader:
                         if key == "diamonds" and int(val) < 1: # смеша значения которое начинает учяствовать в голосовании
                             continue
                         candidates.append(int(val))
+                        if (
+                            EARLY_EXIT_VOTES > 0
+                            and not is_debug
+                            and max(Counter(candidates).values()) >= EARLY_EXIT_VOTES
+                        ):
+                            break   # консенсус уже есть, остальные варианты не нужны
 
             # 4. Выбор лучшего распознанного значения и валидация
             if not is_float and candidates:
