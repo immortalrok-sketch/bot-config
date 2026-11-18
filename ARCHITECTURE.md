@@ -41,6 +41,7 @@ graph TB
 
     subgraph tools ["Слой TOOLS"]
         tools/Grab screens
+        tools/Profile ocr
         tools/check_canvas
         tools/get_coords
         tools/make_mask
@@ -96,6 +97,7 @@ graph TB
     services/telegram_bot --> vision/vision
     tools/Grab screens --> inputs/windows
     tools/Grab screens --> vision/vision
+    tools/Profile ocr --> vision/ocr_reader
     vision/__init__ --> vision/vision
     vision/debug --> inputs/windows
     vision/debug --> vision/vision

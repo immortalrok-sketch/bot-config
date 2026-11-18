@@ -1,6 +1,7 @@
 """
 Агент ноды: старт Engine + heartbeat на Main.
 На Main ещё Telegram (живёт даже когда Engine выключен).
+Ребут/выключение через :5001.
 Порт 5001. Консоли свёрнуты.
 """
 import os
@@ -194,7 +195,6 @@ def _heartbeat_loop():
 
 
 def _build_nodes_from_cfg() -> dict:
-    """Список из farm_nodes, когда Engine выключен."""
     nodes = {}
     for n in CFG.get("farm_nodes") or []:
         pc = n.get("pc_name")
@@ -214,7 +214,6 @@ def _build_nodes_from_cfg() -> dict:
 
 
 def _get_nodes_provider() -> dict:
-    """Сначала живой реестр Engine, иначе farm_nodes."""
     if requests:
         try:
             r = requests.get("http://127.0.0.1:5000/api/nodes", timeout=1.5)
@@ -228,7 +227,6 @@ def _get_nodes_provider() -> dict:
 
 
 def start_telegram_if_main():
-    """Только Main + telegram.enabled — иначе Conflict с Engine."""
     if not CFG.get("is_server_pc"):
         return
     tg = CFG.get("telegram") or {}
@@ -255,6 +253,24 @@ def start_telegram_if_main():
         print(f"[Watchdog] Telegram error: {e}", flush=True)
 
 
+def _power_action(mode: str) -> dict:
+    """mode: reboot | shutdown"""
+    if sys.platform != "win32":
+        return {"status": "error", "message": "only_windows"}
+    if mode == "reboot":
+        cmd = ["shutdown", "/r", "/t", "5", "/c", "CyberFarm reboot"]
+    elif mode == "shutdown":
+        cmd = ["shutdown", "/s", "/t", "5", "/c", "CyberFarm shutdown"]
+    else:
+        return {"status": "error", "message": "bad_mode"}
+    try:
+        subprocess.Popen(cmd, shell=False)
+        print(f"[Watchdog] power: {mode} in 5s", flush=True)
+        return {"status": "ok", "message": mode, "delay_sec": 5}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.route("/ping", methods=["GET"])
 def ping():
     return jsonify(
@@ -279,6 +295,18 @@ def status():
     return ping()
 
 
+@app.route("/reboot", methods=["POST", "GET"])
+def api_reboot():
+    r = _power_action("reboot")
+    return jsonify(r), 200 if r.get("status") == "ok" else 500
+
+
+@app.route("/shutdown", methods=["POST", "GET"])
+def api_shutdown():
+    r = _power_action("shutdown")
+    return jsonify(r), 200 if r.get("status") == "ok" else 500
+
+
 def main():
     minimize_own_console()
     port = CFG["watchdog_port"]
@@ -287,7 +315,10 @@ def main():
         flush=True,
     )
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
-    start_telegram_if_main()
+    try:
+        start_telegram_if_main()
+    except Exception as e:
+        print(f"[Watchdog] Telegram offline/skip: {e}", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 

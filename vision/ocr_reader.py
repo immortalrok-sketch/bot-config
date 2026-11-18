@@ -106,12 +106,52 @@ EARLY_EXIT_VOTES = 2
 # текста (use_det=True), если быстрый режим вернул пустую строку.
 DET_FALLBACKS_PER_KEY = 1
 
+# Настройка onnxruntime (движок под RapidOCR). По умолчанию он берёт все ядра и между вызовами
+# «крутится вхолостую» (spinning) — на мелких кропах это впустую жжёт процессор.
+#   intra / inter — число потоков (0 — не менять), no_spin — не ждать новую работу активным циклом.
+ORT_TUNING = {"enabled": True, "intra": 2, "inter": 1, "no_spin": True}
+
+
+def _tune_onnxruntime() -> None:
+    """
+    Один раз подменяет создание сессий onnxruntime так, чтобы к ним применялись ORT_TUNING.
+    Вызывать ДО RapidOCR(): он создаёт сессии при инициализации. Результаты распознавания
+    не меняются, меняется только расход процессора. При любой ошибке работает как раньше.
+    """
+    try:
+        import onnxruntime as ort
+    except Exception:
+        return
+    if getattr(ort.InferenceSession, "_cyberfarm_tuned", False):
+        return
+    original_init = ort.InferenceSession.__init__
+
+    def tuned_init(self, path_or_bytes, sess_options=None, *args, **kwargs):
+        if ORT_TUNING.get("enabled", True):
+            try:
+                if sess_options is None:
+                    sess_options = ort.SessionOptions()
+                if ORT_TUNING.get("intra"):
+                    sess_options.intra_op_num_threads = int(ORT_TUNING["intra"])
+                if ORT_TUNING.get("inter"):
+                    sess_options.inter_op_num_threads = int(ORT_TUNING["inter"])
+                if ORT_TUNING.get("no_spin"):
+                    sess_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            except Exception:
+                pass
+        original_init(self, path_or_bytes, sess_options, *args, **kwargs)
+
+    ort.InferenceSession.__init__ = tuned_init
+    ort.InferenceSession._cyberfarm_tuned = True
+
+
 # Загрузка валидации строго от абсолютного корня проекта (ROOT_DIR)
 DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 DIGIT_LEN, MAX_LIMITS = load_ocr_validation_config(DEFAULT_CONFIG_PATH)
 
 class HUDReader:
     def __init__(self, debug_mode: bool = False):
+        _tune_onnxruntime()
         self.ocr = RapidOCR()
         self.cache: Dict[str, Dict[str, Any]] = {}
         self.pending_cache: Dict[str, Dict[str, Any]] = {}

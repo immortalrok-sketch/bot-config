@@ -123,7 +123,6 @@ class TelegramControlBot:
             return False
 
     async def _dispatch_engine(self, node: dict, action: str, instance=None) -> bool:
-        """Всегда HTTP — TG в watchdog, не в Engine."""
         ip = self._node_ip(node)
         if not ip:
             return False
@@ -139,6 +138,17 @@ class TelegramControlBot:
         ok = await self._get_ok(f"http://{ip}:{WATCHDOG_PORT}/start_engine")
         if not ok:
             ok = await self._post_json(f"http://{ip}:{WATCHDOG_PORT}/start_engine", {})
+        return ok
+
+    async def _dispatch_power(self, node: dict, mode: str) -> bool:
+        """mode: reboot | shutdown → watchdog :5001"""
+        ip = self._node_ip(node)
+        if not ip:
+            return False
+        path = "reboot" if mode == "reboot" else "shutdown"
+        ok = await self._get_ok(f"http://{ip}:{WATCHDOG_PORT}/{path}")
+        if not ok:
+            ok = await self._post_json(f"http://{ip}:{WATCHDOG_PORT}/{path}", {})
         return ok
 
     def _sort_node_ids(self, nodes: dict) -> list:
@@ -167,6 +177,10 @@ class TelegramControlBot:
             [
                 InlineKeyboardButton(text="🗙 Закрыть окна ВСЕ", callback_data="global_close_wins"),
             ],
+            [
+                InlineKeyboardButton(text="🔄 Ребут ВСЕ", callback_data="global_reboot"),
+                InlineKeyboardButton(text="⏻ Выкл ВСЕ", callback_data="global_shutdown"),
+            ],
             [InlineKeyboardButton(text="--- Узлы фермы (ПК) ---", callback_data="ignore")],
         ]
         nodes = self._get_all_nodes()
@@ -194,6 +208,10 @@ class TelegramControlBot:
             ],
             [
                 InlineKeyboardButton(text="🗙 Закрыть окна", callback_data=f"node_cmd:{pc_id}:close_windows"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Ребут ПК", callback_data=f"node_power:{pc_id}:reboot"),
+                InlineKeyboardButton(text="⏻ Выкл ПК", callback_data=f"node_power:{pc_id}:shutdown"),
             ],
         ]
         nodes = self._get_all_nodes()
@@ -255,6 +273,41 @@ class TelegramControlBot:
                 "⚠️ **Закрыть игровые окна на ВСЕХ нодах?**\n"
                 "(пауза + закрытие клиентов)",
                 reply_markup=self._build_confirm("close_windows", "ALL"),
+                parse_mode="Markdown",
+            )
+            await callback.answer()
+
+        @self.dp.callback_query(F.data == "global_reboot")
+        async def cb_greboot(callback: types.CallbackQuery):
+            if not self._is_admin(callback.from_user.id):
+                return
+            await callback.message.edit_text(
+                "⚠️ **Перезагрузить ВСЕ ПК через 5 сек?**",
+                reply_markup=self._build_confirm("reboot", "ALL"),
+                parse_mode="Markdown",
+            )
+            await callback.answer()
+
+        @self.dp.callback_query(F.data == "global_shutdown")
+        async def cb_gshutdown(callback: types.CallbackQuery):
+            if not self._is_admin(callback.from_user.id):
+                return
+            await callback.message.edit_text(
+                "⚠️ **Выключить ВСЕ ПК через 5 сек?**",
+                reply_markup=self._build_confirm("shutdown", "ALL"),
+                parse_mode="Markdown",
+            )
+            await callback.answer()
+
+        @self.dp.callback_query(F.data.startswith("node_power:"))
+        async def cb_node_power(callback: types.CallbackQuery):
+            if not self._is_admin(callback.from_user.id):
+                return
+            _, pc_id, mode = callback.data.split(":")
+            label = "перезагрузить" if mode == "reboot" else "выключить"
+            await callback.message.edit_text(
+                f"⚠️ **{label.capitalize()} `{pc_id}` через 5 сек?**",
+                reply_markup=self._build_confirm(mode, pc_id),
                 parse_mode="Markdown",
             )
             await callback.answer()
@@ -477,6 +530,25 @@ class TelegramControlBot:
             if not self._is_admin(callback.from_user.id):
                 return
             _, action, scope = callback.data.split(":", 2)
+
+            if action in ("reboot", "shutdown"):
+                if scope == "ALL":
+                    nodes = list(self._get_all_nodes().values())
+                    results = await asyncio.gather(
+                        *[self._dispatch_power(n, action) for n in nodes],
+                        return_exceptions=True,
+                    )
+                    n = sum(1 for r in results if r is True)
+                else:
+                    node = self._get_all_nodes().get(scope, {})
+                    n = 1 if await self._dispatch_power(node, action) else 0
+                await callback.message.edit_text(
+                    f"⏹ Готово: {action} × {n} (через ~5 сек)",
+                    reply_markup=self._build_main_menu(),
+                )
+                await callback.answer()
+                return
+
             if scope == "ALL":
                 nodes = list(self._get_all_nodes().values())
                 results = await asyncio.gather(
@@ -499,23 +571,30 @@ class TelegramControlBot:
 
     def _run_bot_loop(self):
         import logging
-        logging.getLogger("aiogram").setLevel(logging.INFO)
+        logging.getLogger("aiogram").setLevel(logging.WARNING)
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
         async def _runner():
-            await self.bot.delete_webhook(drop_pending_updates=True)
-            print("[TelegramBot] webhook сброшен, polling...", flush=True)
-            await self.dp.start_polling(self.bot, drop_pending_updates=True)
+            while True:
+                try:
+                    try:
+                        await self.bot.delete_webhook(drop_pending_updates=True)
+                    except Exception as e:
+                        print(f"[TelegramBot] delete_webhook: {e}", flush=True)
+                    print("[TelegramBot] polling...", flush=True)
+                    await self.dp.start_polling(self.bot, drop_pending_updates=True)
+                except TelegramConflictError:
+                    print("[TelegramBot] Конфликт токена — жду 30с", flush=True)
+                    await asyncio.sleep(30)
+                except Exception as e:
+                    print(f"[TelegramBot] сеть/polling: {e} — ретрай через 15с", flush=True)
+                    await asyncio.sleep(15)
 
         try:
             self._loop.run_until_complete(_runner())
-        except TelegramConflictError:
-            print("[TelegramBot] Конфликт токена", flush=True)
         except Exception as e:
-            print(f"[TelegramBot] polling ERROR: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
+            print(f"[TelegramBot] loop dead: {e}", flush=True)
 
     def start_in_background(self):
         if self._thread and self._thread.is_alive():
