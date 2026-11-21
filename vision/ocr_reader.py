@@ -109,7 +109,7 @@ DET_FALLBACKS_PER_KEY = 1
 # Настройка onnxruntime (движок под RapidOCR). По умолчанию он берёт все ядра и между вызовами
 # «крутится вхолостую» (spinning) — на мелких кропах это впустую жжёт процессор.
 #   intra / inter — число потоков (0 — не менять), no_spin — не ждать новую работу активным циклом.
-ORT_TUNING = {"enabled": True, "intra": 2, "inter": 1, "no_spin": True}
+ORT_TUNING = {"enabled": True, "intra": 1, "inter": 1, "no_spin": True}
 
 
 def _tune_onnxruntime() -> None:
@@ -145,6 +145,14 @@ def _tune_onnxruntime() -> None:
     ort.InferenceSession._cyberfarm_tuned = True
 
 
+# Поле, которое подряд FAIL_BACKOFF_AFTER чтений не дало значения (на RF так бывает с exp_percent и
+# combat_power), дальше читается не каждый раз: после пропуска FAIL_BACKOFF_SKIP_READS чтений.
+# Если поле заработало — снова читается каждый раз. 0 — не пропускать. В режиме отладки не пропускается.
+# Поля из FAIL_BACKOFF_EXEMPT читаются всегда (бриллианты — главное, и читаются дёшево).
+FAIL_BACKOFF_AFTER = 2
+FAIL_BACKOFF_SKIP_READS = 3
+FAIL_BACKOFF_EXEMPT = {"diamonds"}
+
 # Загрузка валидации строго от абсолютного корня проекта (ROOT_DIR)
 DEFAULT_CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 DIGIT_LEN, MAX_LIMITS = load_ocr_validation_config(DEFAULT_CONFIG_PATH)
@@ -159,6 +167,8 @@ class HUDReader:
         self.diamond_history: Dict[str, list] = {}
         self.debug_mode = debug_mode
         self._det_left = DET_FALLBACKS_PER_KEY
+        self._fail_streak: Dict[Tuple[str, str], int] = {}   # (окно, поле) -> чтений подряд без значения
+        self._skip_left: Dict[Tuple[str, str], int] = {}     # (окно, поле) -> сколько чтений ещё пропустить
         self.debug_dir = os.path.join(ROOT_DIR, "debug_crops")
         os.makedirs(self.debug_dir, exist_ok=True)
         self._hclose_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4, 1))
@@ -505,6 +515,14 @@ class HUDReader:
             if key == "diamond_search_zone":
                 continue
 
+            # хронически нечитаемое поле пропускаем (значение остаётся прежним из кэша)
+            skip_key = (window_name, key)
+            backoff_on = FAIL_BACKOFF_AFTER > 0 and not is_debug and key not in FAIL_BACKOFF_EXEMPT
+            if backoff_on and self._skip_left.get(skip_key, 0) > 0:
+                self._skip_left[skip_key] -= 1
+                continue
+
+            got_value = False
             crop = None
 
             # 1. Специфическая логика для diamonds: Шаблон с фоллбэком на координаты
@@ -586,6 +604,7 @@ class HUDReader:
                     if is_float:
                         if self._is_valid_value(key, val, max_limits=max_limits, digit_len=digit_len):
                             self.cache[window_name][key] = val
+                            got_value = True
                             break
                     else:
                         if key == "diamonds" and int(val) < 1: # смеша значения которое начинает учяствовать в голосовании
@@ -601,6 +620,7 @@ class HUDReader:
             # 4. Выбор лучшего распознанного значения и валидация
             if not is_float and candidates:
                 winner = self._pick_winner(key, candidates)
+                got_value = winner is not None
                 curr_val = self.cache[window_name].get(key, 0)
                 pending = self.pending_cache[window_name].get(key)
                 is_valid = self._is_valid_value(key, winner, curr_val, pending, max_limits, digit_len)
@@ -626,6 +646,16 @@ class HUDReader:
                             self.pending_cache[window_name][key] = (winner, 0)
                     else:
                         self.pending_cache[window_name][key] = (winner, 1)
+
+            # учёт хронически нечитаемых полей
+            if backoff_on:
+                if got_value:
+                    self._fail_streak.pop(skip_key, None)
+                else:
+                    streak = self._fail_streak.get(skip_key, 0) + 1
+                    self._fail_streak[skip_key] = streak
+                    if streak >= FAIL_BACKOFF_AFTER:
+                        self._skip_left[skip_key] = FAIL_BACKOFF_SKIP_READS
 
         return self.cache[window_name].copy()
 
